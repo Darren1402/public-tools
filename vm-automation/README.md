@@ -1,4 +1,4 @@
-# Azure VM Start/Stop Automation with PowerShell
+# Azure VM Start/Stop Automation
 
 ![PowerShell](https://img.shields.io/badge/PowerShell-5391FE?style=flat&logo=powershell&logoColor=white)
 ![Azure](https://img.shields.io/badge/Azure-0078D4?style=flat&logo=microsoftazure&logoColor=white)
