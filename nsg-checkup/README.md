@@ -100,7 +100,8 @@ python3 nsg_check_v4.py --no-report
 |---|---|
 | Firewall policy | Cannot see inside a firewall's own policy, such as Panorama. Only checks the NSG in front of a firewall/NVA hop |
 | Application Security Groups | Not supported. A rule using an ASG instead of a plain IP is not evaluated for membership |
-| Multiple firewall hops | Only follows one hop. A chain of two or more firewalls won't be fully traced |
+| Hop limit | Checks at most 3 hops total: source NSG, one firewall/NVA hop if detected, destination NSG. If real traffic crosses more hops than that, anything beyond the third is not checked at all |
+| Multiple firewall hops | Only follows one firewall/NVA hop. A chain of two or more firewalls in sequence won't be traced past the first |
 | Load Balancer NAT rules | Only checks standard Load Balancing Rules for Floating IP, not Inbound NAT Rules |
 | Writes | None. Every operation is read-only, nothing is created, changed, or deleted |
 | Real-world delivery | ALLOW on every NSG checked does not guarantee the traffic actually works end-to-end |
