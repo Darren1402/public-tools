@@ -1,4 +1,4 @@
-# Azure NSG Traffic Checker with Python
+# Azure NSG Traffic Checker
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
 ![Azure CLI](https://img.shields.io/badge/Azure%20CLI-0078D4?style=flat&logo=microsoftazure&logoColor=white)
