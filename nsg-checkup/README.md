@@ -43,6 +43,23 @@ Before running the script, ensure you have:
 
 ---
 
+## Where to put this
+
+Keep this in its own standalone folder, not inside a Terraform or infrastructure repo:
+
+```
+Documents/
+├── Terraform/
+│   └── my-project/
+├── Scripts/
+│   └── nsg-check/
+│       ├── nsg_check_v4.py
+│       ├── mychecks.csv
+│       └── README.md
+```
+
+---
+
 ## Usage
 
 ### Single check
@@ -56,7 +73,15 @@ You'll be prompted for Source IP, Destination IP, Port, and Protocol.
 python3 nsg_check_v4.py --batch mychecks.csv
 ```
 
-CSV columns required: `source_ip,destination_ip,port,protocol`
+`mychecks.csv` is included in this repo as an empty template, header row only. Fill in your own rows locally before running.
+
+**Before you edit it**, run this once so your local edits never get committed back:
+```bash
+git update-index --skip-worktree mychecks.csv
+```
+This tells git to ignore future changes to this one file on your machine, while keeping the empty template itself checked into the repo for anyone who clones it.
+
+Columns: `source_ip,destination_ip,port,protocol`
 ```csv
 source_ip,destination_ip,port,protocol
 192.168.150.133,8.8.8.8,443,Tcp
