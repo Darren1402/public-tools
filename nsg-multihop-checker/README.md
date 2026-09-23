@@ -44,7 +44,7 @@ Before running the script, ensure you have:
 ## Usage
 
 ```bash
-python3 nsg_check_multihop_v2.py
+python3 nsg_check_multihop.py
 ```
 
 You will be prompted for Source IP, Destination IP, Port, and Protocol.
@@ -52,7 +52,7 @@ You will be prompted for Source IP, Destination IP, Port, and Protocol.
 Set a different hop limit if a real path is expected to be longer than the default of 10:
 
 ```bash
-python3 nsg_check_multihop_v2.py --max-hops 15
+python3 nsg_check_multihop.py --max-hops 15
 ```
 
 ---
