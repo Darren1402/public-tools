@@ -337,6 +337,8 @@ def trace_single_path(src_ip, dst_ip, port, protocol, rows, max_hops):
     print(f"\nSource      -> VNet: {src_row['VNetName']}  Subnet: {src_row['SubnetName']}  NSG: {src_row['NSG_Name']}")
     if not dst_is_external:
         print(f"Destination -> VNet: {dst_row['VNetName']}  Subnet: {dst_row['SubnetName']}  NSG: {dst_row['NSG_Name']}")
+        if src_row["VNetName"] == dst_row["VNetName"]:
+            print("Note: source and destination are in the same VNet -- no peering check needed.")
 
     current = src_row
     visited = set()
