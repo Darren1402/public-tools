@@ -41,6 +41,8 @@ It helps:
 
 Windows needed a small change to how the script calls `az`, since Windows resolves the Azure CLI as `az.cmd` rather than `az`. `nsg_check_multihop_win.py` is a separate copy with that adjustment, it is Windows-specific and should not be run on macOS or Linux.
 
+Both scripts otherwise contain identical logic, including the same pagination handling, this is not a platform-specific fix, both files check for the same set of possible field names Azure CLI can return for continuing to the next page of results.
+
 ---
 Before running the script, ensure you have:
 
