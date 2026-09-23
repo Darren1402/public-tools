@@ -73,7 +73,7 @@ def run_resource_graph_query_all_pages(query, max_pages=25):
         if result is None:
             break
         all_rows.extend(result.get("data", []))
-        skip_token = result.get("skipToken") or result.get("$skipToken")
+        skip_token = result.get("skip_token") or result.get("skipToken") or result.get("$skipToken")
         if not skip_token:
             break
     return all_rows
