@@ -22,14 +22,14 @@ USAGE
 import subprocess, json, ipaddress, sys, argparse, csv
 
 def az(args):
-    result = subprocess.run(args, capture_output=True, text=True)
+    result = subprocess.run(args, capture_output=True, text=True, shell=True)
     if result.returncode != 0:
         print("Something went wrong running:", " ".join(args))
         print(result.stderr)
         return None
     return json.loads(result.stdout) if result.stdout.strip() else None
 
-subprocess.run(["az", "extension", "add", "--name", "resource-graph", "-y"], capture_output=True)
+subprocess.run(["az", "extension", "add", "--name", "resource-graph", "-y"], capture_output=True, shell=True)
 
 QUERY = (
     'Resources '
@@ -63,7 +63,7 @@ def run_resource_graph_query_all_pages(query, max_pages=25):
         if result is None:
             break
         all_rows.extend(result.get("data", []))
-        skip_token = result.get("skipToken") or result.get("$skipToken")
+        skip_token = result.get("skip_token") or result.get("skipToken") or result.get("$skipToken")
         if not skip_token:
             break
     return all_rows
