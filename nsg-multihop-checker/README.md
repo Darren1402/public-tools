@@ -1,4 +1,4 @@
-# Azure NSG Multi-Hop Traffic Tracer
+# Azure NSG Multi-Hop Traffic Tracer with Python
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
 ![Azure CLI](https://img.shields.io/badge/Azure%20CLI-0078D4?style=flat&logo=microsoftazure&logoColor=white)
@@ -32,7 +32,16 @@ It helps:
 
 ---
 
-## Prerequisites
+## Platform notes
+
+| Platform | Script to use |
+|---|---|
+| macOS / Linux | `nsg_check_multihop.py` |
+| Windows | `nsg_check_multihop_win.py` |
+
+Windows needed a small change to how the script calls `az`, since Windows resolves the Azure CLI as `az.cmd` rather than `az`. `nsg_check_multihop_win.py` is a separate copy with that adjustment, it is Windows-specific and should not be run on macOS or Linux.
+
+---
 Before running the script, ensure you have:
 
 - Python 3, no pip installs needed
