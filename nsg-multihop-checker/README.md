@@ -44,11 +44,32 @@ Windows needed a small change to how the script calls `az`, since Windows resolv
 Both scripts otherwise contain identical logic, including the same pagination handling, this is not a platform-specific fix, both files check for the same set of possible field names Azure CLI can return for continuing to the next page of results.
 
 ---
+
+## Prerequisites
 Before running the script, ensure you have:
 
 - Python 3, no pip installs needed
 - Azure CLI, logged in (`az login`)
 - Reader access to the target subscription(s), no write permissions needed
+
+---
+
+## Where to put this
+
+Keep this in its own standalone folder, not inside a Terraform or infrastructure repo:
+
+```
+Documents/
+├── Terraform/
+│   └── my-project/
+├── Scripts/
+│   └── nsg-multihop-checker/
+│       ├── nsg_check_multihop.py
+│       ├── nsg_check_multihop_win.py
+│       └── README.md
+```
+
+Only the script matching your OS is actually used, the other one can stay in the folder unused or be removed locally.
 
 ---
 
