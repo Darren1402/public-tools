@@ -1,4 +1,4 @@
-# Azure NSG Multi-Hop Traffic Tracer with Python
+# Azure NSG Multi-Hop Traffic Tracer
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
 ![Azure CLI](https://img.shields.io/badge/Azure%20CLI-0078D4?style=flat&logo=microsoftazure&logoColor=white)
