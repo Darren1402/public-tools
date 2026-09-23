@@ -22,14 +22,14 @@ USAGE
 import subprocess, json, ipaddress, sys, argparse, csv
 
 def az(args):
-    result = subprocess.run(args, capture_output=True, text=True, shell=True)
+    result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode != 0:
         print("Something went wrong running:", " ".join(args))
         print(result.stderr)
         return None
     return json.loads(result.stdout) if result.stdout.strip() else None
 
-subprocess.run(["az", "extension", "add", "--name", "resource-graph", "-y"], capture_output=True, shell=True)
+subprocess.run(["az", "extension", "add", "--name", "resource-graph", "-y"], capture_output=True)
 
 QUERY = (
     'Resources '
