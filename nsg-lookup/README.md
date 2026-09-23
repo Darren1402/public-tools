@@ -38,6 +38,23 @@ Before running the script, ensure you have:
 
 ---
 
+## Where to put this
+
+Keep this in its own standalone folder, not inside a Terraform or infrastructure repo:
+
+```
+Documents/
+├── Terraform/
+│   └── my-project/
+├── Scripts/
+│   └── nsg-lookup/
+│       ├── nsg_lookup.py
+│       ├── ips.csv
+│       └── README.md
+```
+
+---
+
 ## Usage
 
 ### Single lookup
