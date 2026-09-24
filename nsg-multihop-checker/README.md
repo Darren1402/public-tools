@@ -27,8 +27,9 @@ It helps:
 | Peering aware | Verifies VNets are genuinely peered before assuming traffic can reach directly, does not guess |
 | Loop protection | Detects a routing loop and stops instead of tracing forever |
 | Max hop limit | Configurable safety limit, stops and warns if the destination is not reached within it |
-| Load Balancer aware | Detects an LB frontend IP as the destination, reads its Floating IP setting, and automatically traces to the real backend IP if Floating IP is off, including every backend if there is more than one |
+| Load Balancer aware | Detects a Load Balancer frontend IP anywhere in the path, at the final destination or at any hop along the route, reads its Floating IP setting, and automatically traces to the real backend IP(s) if Floating IP is off |
 | ASG aware | Checks Application Security Group membership on both source and destination, not just plain IP addresses, and shows when a rule matched through an ASG rather than an address |
+| Grouped backends | When multiple backend IPs land in the same subnet and NSG, checks and reports them together instead of repeating an identical result |
 | Protocol validation | Rejects an invalid protocol instead of silently matching nothing |
 
 ---
@@ -97,6 +98,7 @@ python3 nsg_check_multihop.py --max-hops 15
 | Route-table dependent hops | A hop only exists if a real Azure route table points to it. Anything a firewall does internally, such as NAT or forwarding out a different interface, with no matching Azure route is invisible. Direct VNet peering does not need a route table and is always detected |
 | Application Security Groups | Supported for both source and destination. Membership is checked against each NIC's current ASG tags, if a NIC's ASG membership just changed, there may be a brief delay before Azure's data reflects it |
 | Load Balancer NAT rules | Only checks standard Load Balancing Rules for Floating IP, not Inbound NAT Rules |
+| Mid-trace Floating IP reliability | Detected correctly at the final destination in every test so far. When a Load Balancer shows up mid-trace, it usually resolves correctly too, but has failed to determine the Floating IP setting on at least one real LB with no clear cause found yet. When it can't determine it, it says so directly rather than guessing, verify manually if this happens |
 | No batch mode | This version checks one source/destination pair per run |
 | No report file | This version does not save a report to disk |
 | Writes | None. Every operation is read-only, nothing is created, changed, or deleted |
