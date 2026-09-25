@@ -36,6 +36,7 @@ It helps:
 | ASG aware | Checks Application Security Group membership on both source and destination, not just plain IP addresses, and shows when a rule matched through an ASG rather than an address |
 | Grouped backends | When multiple backend IPs land in the same subnet and NSG, checks and reports them together instead of repeating an identical result |
 | Protocol validation | Rejects an invalid protocol instead of silently matching nothing |
+| Batch mode | Checks multiple source/destination pairs from a CSV file in one run |
 
 ---
 
@@ -94,6 +95,22 @@ Set a different hop limit if a real path is expected to be longer than the defau
 python3 nsg_check_multihop.py --max-hops 15
 ```
 
+Check multiple pairs from a CSV file:
+
+```bash
+python3 nsg_check_multihop.py --batch mychecks.csv
+```
+
+The CSV needs this header row, with protocol as `Tcp`, `Udp`, or `Any`:
+
+```
+source_ip,destination_ip,port,protocol
+10.1.1.4,10.2.5.10,443,Tcp
+10.4.2.8,10.2.5.10,53,Udp
+```
+
+Rows with an invalid protocol are skipped with a message. Both flags can be combined, e.g. `--batch mychecks.csv --max-hops 15`.
+
 ---
 
 ## Notes
@@ -104,15 +121,14 @@ python3 nsg_check_multihop.py --max-hops 15
 | Application Security Groups | Supported for both source and destination. Membership is checked against each NIC's current ASG tags, if a NIC's ASG membership just changed, there may be a brief delay before Azure's data reflects it |
 | Load Balancer NAT rules | Only checks standard Load Balancing Rules for Floating IP, not Inbound NAT Rules |
 | Mid-trace Floating IP reliability | Detected correctly at the final destination in every test so far. When a Load Balancer shows up mid-trace, it usually resolves correctly too, but has failed to determine the Floating IP setting on at least one real LB with no clear cause found yet. When it can't determine it, it says so directly rather than guessing, verify manually if this happens |
-| No batch mode | This version checks one source/destination pair per run |
-| No report file | This version does not save a report to disk |
+| No report file | Results print to screen only, including in batch mode. Nothing is saved to disk |
 | Writes | None. Every operation is read-only, nothing is created, changed, or deleted |
 | Real-world delivery | ALLOW at every hop does not guarantee the traffic actually works end to end |
 
 ---
 
 ## Workflow
-1. Run a check with the ticket's source IP, destination IP, port, protocol
+1. Run a check with the ticket's source IP, destination IP, port, protocol (or a CSV for multiple flows)
 2. Read the hop-by-hop result, a Load Balancer or Floating IP redirect prints automatically if relevant
 3. If any hop shows DENY, add the corresponding row to that VNet's rules CSV in the Terraform project, commit, and apply
 4. Re-run the same check to confirm it now shows ALLOW at every hop
