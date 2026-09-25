@@ -9,7 +9,7 @@ This script traces the full network path from a source IP to a destination IP, c
 It follows route tables and VNet peering hop by hop, not limited to a fixed number of hops, so it can trace a real path through a firewall, a transit VNet, or any chain of route-table forwarding, and tells you exactly which NSG needs a rule if something is blocked.
 
 ## Download
-Get the latest version from [Releases]([https://github.com/Darren1402/public-tools/releases/latest](https://github.com/Darren1402/public-tools/releases?q=nsg-multihop&expanded=true)):
+Get the latest version from [Releases](https://github.com/Darren1402/public-tools/releases?q=nsg-multihop&expanded=true):
 - Mac/Linux/Cloud Shell: `nsg_check_multihop.py`
 - Windows: `nsg_check_multihop_win.py`
 
