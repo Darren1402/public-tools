@@ -1,3 +1,8 @@
+   ## Changelog
+   - **v4.0.0**: Full multi-hop tracing via route tables (no 3-hop cap), new `--max-hops` flag
+   - **v3.0.0**: Previous version (see file History)
+
+
 # Azure NSG Multi-Hop Traffic Tracer with Python
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
