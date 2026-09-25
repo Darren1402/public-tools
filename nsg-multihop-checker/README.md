@@ -74,10 +74,11 @@ Documents/
 │   └── nsg-multihop-checker/
 │       ├── nsg_check_multihop.py
 │       ├── nsg_check_multihop_win.py
+│       ├── mychecks.csv
 │       └── README.md
 ```
 
-Only the script matching your OS is actually used, the other one can stay in the folder unused or be removed locally.
+Only the script matching your OS is actually used, the other one can stay in the folder unused or be removed locally. `mychecks.csv` is only needed for batch mode.
 
 ---
 
