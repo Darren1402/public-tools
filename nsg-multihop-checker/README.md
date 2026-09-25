@@ -1,8 +1,3 @@
-   ## Changelog
-   - **v4.0.0**: Full multi-hop tracing via route tables (no 3-hop cap), new `--max-hops` flag
-   - **v3.0.0**: Previous version (see file History)
-
-
 # Azure NSG Multi-Hop Traffic Tracer with Python
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
@@ -12,6 +7,11 @@
 This script traces the full network path from a source IP to a destination IP, checking every NSG along the way, and reports ALLOW or DENY at each hop.
 
 It follows route tables and VNet peering hop by hop, not limited to a fixed number of hops, so it can trace a real path through a firewall, a transit VNet, or any chain of route-table forwarding, and tells you exactly which NSG needs a rule if something is blocked.
+
+## Download
+Get the latest version from [Releases](https://github.com/Darren1402/public-tools/releases/latest):
+- Mac/Linux/Cloud Shell: `nsg_check_multihop.py`
+- Windows: `nsg_check_multihop_win.py`
 
 ## Use Case
 This is designed for working through firewall or access request tickets where a request's real path crosses multiple NSGs, for example through a firewall and then one or more transit VNets before reaching the final destination.
@@ -116,6 +116,12 @@ python3 nsg_check_multihop.py --max-hops 15
 2. Read the hop-by-hop result, a Load Balancer or Floating IP redirect prints automatically if relevant
 3. If any hop shows DENY, add the corresponding row to that VNet's rules CSV in the Terraform project, commit, and apply
 4. Re-run the same check to confirm it now shows ALLOW at every hop
+
+---
+
+## Changelog
+- **v4.0.0**: Full multi-hop tracing via route tables (no 3-hop cap), new `--max-hops` flag
+- **v3.0.0**: Previous version (see file History)
 
 ---
 
