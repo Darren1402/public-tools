@@ -295,19 +295,20 @@ def check_floating_ip(lb, dst_ip, port, protocol):
       ("floating_off", [backend_ip, ...])    -- re-check these instead
       ("unknown", None)                      -- couldn't determine, warn generically
     """
-    rg = lb["ResourceGroup"]
-    lb_name = lb["LBName"]
-    rules = az(["az", "network", "lb", "rule", "list", "--lb-name", lb_name,
-                "--resource-group", rg, "-o", "json"])
-    if not rules:
+    lb_full = az(["az", "resource", "show", "--ids", lb["LBId"], "-o", "json"])
+    if not lb_full:
         return "unknown", None
+    rules = lb_full.get("properties", {}).get("loadBalancingRules", []) or []
 
     matching = None
     for r in rules:
-        if r.get("protocol", "").lower() not in (protocol.lower(), "all", "*"):
+        props = r.get("properties", r)
+        if props.get("protocol", "").lower() not in (protocol.lower(), "all", "*"):
             continue
-        if str(r.get("frontendPort")) == str(port):
-            matching = r
+        frontend_port = props.get("frontendPort")
+        # HA Ports rules cover every port at once, represented as frontend port 0.
+        if frontend_port in (0, "0", None) or str(frontend_port) == str(port):
+            matching = props
             break
     if not matching:
         return "unknown", None
@@ -366,10 +367,10 @@ def trace_path(src_ip, dst_ip_original, port, protocol, rows, lb_rows, asg_membe
     for dst_ip in effective_dsts:
         if len(effective_dsts) > 1:
             print(f"\n--- Tracing to backend IP {dst_ip} ---")
-        trace_single_path(src_ip, dst_ip, port, protocol, rows, asg_membership, max_hops)
+        trace_single_path(src_ip, dst_ip, port, protocol, rows, lb_rows, asg_membership, max_hops)
 
 
-def trace_single_path(src_ip, dst_ip, port, protocol, rows, asg_membership, max_hops):
+def trace_single_path(src_ip, dst_ip, port, protocol, rows, lb_rows, asg_membership, max_hops):
     src_row = find(src_ip, rows)
     if not src_row:
         print(f"Could not find source IP {src_ip} in any known subnet.")
@@ -386,107 +387,136 @@ def trace_single_path(src_ip, dst_ip, port, protocol, rows, asg_membership, max_
         if src_row["VNetName"] == dst_row["VNetName"]:
             print("Note: source and destination are in the same VNet -- no peering check needed.")
 
-    current = src_row
-    visited = set()
-    any_deny = False
-    hop_num = 0
+    any_deny = [False]
+    _trace_hop(src_row, src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol,
+               rows, lb_rows, asg_membership, hop_num=1, visited=set(), is_first=True,
+               any_deny=any_deny, max_hops=max_hops)
 
-    while True:
-        hop_num += 1
-        key = current["SubnetName"] + current["VNetName"]
-        if key in visited:
-            print(f"\n[!] Routing loop detected at '{current['SubnetName']}' -- stopping trace.")
-            return
-        visited.add(key)
-
-        if hop_num > max_hops:
-            print(f"\n[!] Stopped after {max_hops} hops -- destination not confirmed reached.")
-            print("    This may mean the real path is longer than expected, or there's a")
-            print("    routing loop. Increase --max-hops if you expect a longer real path.")
-            return
-
-        is_first = (hop_num == 1)
-        is_firewall_ish = not is_first
-
-        print(f"\nHop {hop_num} -- NSG '{current['NSG_Name']}' (subnet: {current['SubnetName']}, VNet: {current['VNetName']}):")
-
-        if is_first:
-            result_text, access = check_nsg_direction(current, "outbound", src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol, asg_membership)
-            print(f"  Outbound: {result_text}")
-            if access == "DENY":
-                any_deny = True
-        else:
-            result_text, access = check_nsg_direction(current, "inbound", src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol, asg_membership)
-            print(f"  Inbound:  {result_text}")
-            if access == "DENY":
-                any_deny = True
-            print("  (NSG-only result -- if this device runs its own firewall or inspection")
-            print("   policy, e.g. Panorama, that still needs to be checked separately)")
-
-        # Reached the destination's own subnet -- do the final inbound check and stop.
-        if not dst_is_external and current["SubnetName"] == dst_row["SubnetName"] and current["VNetName"] == dst_row["VNetName"]:
-            if not is_first:
-                # already checked inbound above as this hop
-                pass
-            else:
-                result_text, access = check_nsg_direction(current, "inbound", src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol, asg_membership)
-                print(f"  Inbound:  {result_text}")
-                if access == "DENY":
-                    any_deny = True
-            break
-
-        # Can we reach the destination directly from here (same/peered VNet), no more hops needed?
-        if not dst_is_external and can_reach_directly(current, dst_row):
-            print(f"\nHop {hop_num + 1} -- Destination NSG '{dst_row['NSG_Name']}' (subnet: {dst_row['SubnetName']}):")
-            result_text, access = check_nsg_direction(dst_row, "inbound", src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol, asg_membership)
-            print(f"  Inbound:  {result_text}")
-            if access == "DENY":
-                any_deny = True
-            break
-
-        # Otherwise, consult this hop's route table to find the next hop.
-        route_table = get_route_table(current.get("RouteTableId"))
-        matched_route = find_matching_route(route_table, dst_ip)
-
-        if not matched_route:
-            if dst_is_external:
-                print("\nNo further route table found -- assuming this hop can reach the internet directly.")
-            else:
-                print(f"\n[!] No route found from '{current['SubnetName']}' toward {dst_ip}, and it's not in a")
-                print("    peered VNet. The path cannot be traced further with the routing info available.")
-            break
-
-        next_hop_type = matched_route.get("nextHopType")
-        if next_hop_type == "VirtualAppliance":
-            nva_ip = matched_route.get("nextHopIpAddress")
-            print(f"  Route table sends traffic to a virtual appliance at {nva_ip} (route: \"{matched_route.get('name')}\")")
-            next_row = find(nva_ip, rows) if nva_ip else None
-            if not next_row:
-                print(f"  Could not resolve {nva_ip} to a known subnet -- trace stops here.")
-                break
-            current = next_row
-            continue
-        elif next_hop_type in ("VnetPeering", "VNetLocal"):
-            if dst_is_external:
-                break
-            print(f"\nHop {hop_num + 1} -- Destination NSG '{dst_row['NSG_Name']}' (subnet: {dst_row['SubnetName']}):")
-            result_text, access = check_nsg_direction(dst_row, "inbound", src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol, asg_membership)
-            print(f"  Inbound:  {result_text}")
-            if access == "DENY":
-                any_deny = True
-            break
-        elif next_hop_type == "Internet":
-            print("  Route table sends this traffic to the internet -- no further Azure hops to trace.")
-            break
-        else:
-            print(f"  Route's next hop type is '{next_hop_type}' -- not something this script follows further.")
-            break
-
-    print(f"\n{'DENY somewhere in the path' if any_deny else 'ALLOW at every hop checked'} for {src_ip} -> {dst_ip} port {port}/{protocol}.")
-    if any_deny:
+    print(f"\n{'DENY somewhere in the path' if any_deny[0] else 'ALLOW at every hop checked'} for {src_ip} -> {dst_ip} port {port}/{protocol}.")
+    if any_deny[0]:
         print("Add an Allow rule at whichever hop above showed DENY.")
     print("Reminder: this only proves what Azure NSGs allow. Any firewall's own policy")
     print("(e.g. Panorama) along the way still needs to be checked separately.")
+
+
+def _trace_hop(current, src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol,
+                rows, lb_rows, asg_membership, hop_num, visited, is_first, any_deny, max_hops):
+    key = current["SubnetName"] + current["VNetName"]
+    if key in visited:
+        print(f"\n[!] Routing loop detected at '{current['SubnetName']}' -- stopping trace.")
+        return
+    visited = visited | {key}
+
+    if hop_num > max_hops:
+        print(f"\n[!] Stopped after {max_hops} hops -- destination not confirmed reached.")
+        print("    This may mean the real path is longer than expected, or there's a")
+        print("    routing loop. Increase --max-hops if you expect a longer real path.")
+        return
+
+    print(f"\nHop {hop_num} -- NSG '{current['NSG_Name']}' (subnet: {current['SubnetName']}, VNet: {current['VNetName']}):")
+
+    if is_first:
+        result_text, access = check_nsg_direction(current, "outbound", src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol, asg_membership)
+        print(f"  Outbound: {result_text}")
+        if access == "DENY":
+            any_deny[0] = True
+    else:
+        result_text, access = check_nsg_direction(current, "inbound", src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol, asg_membership)
+        print(f"  Inbound:  {result_text}")
+        if access == "DENY":
+            any_deny[0] = True
+        print("  (NSG-only result -- if this device runs its own firewall or inspection")
+        print("   policy, e.g. Panorama, that still needs to be checked separately)")
+
+    # Reached the destination's own subnet -- do the final inbound check and stop.
+    if not dst_is_external and current["SubnetName"] == dst_row["SubnetName"] and current["VNetName"] == dst_row["VNetName"]:
+        if is_first:
+            result_text, access = check_nsg_direction(current, "inbound", src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol, asg_membership)
+            print(f"  Inbound:  {result_text}")
+            if access == "DENY":
+                any_deny[0] = True
+        return
+
+    # Can we reach the destination directly from here (same/peered VNet), no more hops needed?
+    if not dst_is_external and can_reach_directly(current, dst_row):
+        print(f"\nHop {hop_num + 1} -- Destination NSG '{dst_row['NSG_Name']}' (subnet: {dst_row['SubnetName']}):")
+        result_text, access = check_nsg_direction(dst_row, "inbound", src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol, asg_membership)
+        print(f"  Inbound:  {result_text}")
+        if access == "DENY":
+            any_deny[0] = True
+        return
+
+    # Otherwise, consult this hop's route table to find the next hop.
+    route_table = get_route_table(current.get("RouteTableId"))
+    matched_route = find_matching_route(route_table, dst_ip)
+
+    if not matched_route:
+        if dst_is_external:
+            if is_first:
+                print("\nNo further route table found -- assuming this hop can reach the internet directly.")
+            else:
+                print("\nNo further route table found here. Azure's visibility ends at this point --")
+                print("whatever happens next is entirely up to this device's own policy (e.g. Panorama).")
+        else:
+            print(f"\n[!] No route found from '{current['SubnetName']}' toward {dst_ip}, and it's not in a")
+            print("    peered VNet. The path cannot be traced further with the routing info available.")
+        return
+
+    next_hop_type = matched_route.get("nextHopType")
+    if next_hop_type == "VirtualAppliance":
+        nva_ip = matched_route.get("nextHopIpAddress")
+        print(f"  Route table sends traffic to a virtual appliance at {nva_ip} (route: \"{matched_route.get('name')}\")")
+        if not nva_ip:
+            print("  No next-hop IP on this route -- trace stops here.")
+            return
+
+        # Check whether this mid-trace hop is itself a Load Balancer frontend,
+        # same Floating IP logic used for the final destination, applied here too.
+        effective_ips = resolve_effective_destination(nva_ip, port, protocol, lb_rows)
+        if len(effective_ips) > 1 or effective_ips[0] != nva_ip:
+            print(f"  This hop resolves to {len(effective_ips)} real IP(s) after the Floating IP check above.")
+
+        # Group backend IPs that land in the exact same subnet, since same subnet
+        # means same NSG and same route table, the trace result would be identical.
+        groups = {}
+        unresolved = []
+        for eff_ip in effective_ips:
+            next_row = find(eff_ip, rows)
+            if not next_row:
+                unresolved.append(eff_ip)
+                continue
+            group_key = (next_row["VNetName"], next_row["SubnetName"])
+            groups.setdefault(group_key, {"row": next_row, "ips": []})["ips"].append(eff_ip)
+
+        for eff_ip in unresolved:
+            print(f"  Could not resolve {eff_ip} to a known subnet -- trace stops here.")
+
+        for group_key, group in groups.items():
+            ips_in_group = group["ips"]
+            if len(ips_in_group) > 1:
+                print(f"\n--- {', '.join(ips_in_group)} share the same subnet/NSG, "
+                      f"result below applies to all of them ---")
+            elif len(effective_ips) > 1 or len(groups) > 1:
+                print(f"\n--- Continuing hop trace via {ips_in_group[0]} ---")
+            _trace_hop(group["row"], src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol,
+                       rows, lb_rows, asg_membership, hop_num + 1, visited, False, any_deny, max_hops)
+        return
+
+    elif next_hop_type in ("VnetPeering", "VNetLocal"):
+        if dst_is_external:
+            return
+        print(f"\nHop {hop_num + 1} -- Destination NSG '{dst_row['NSG_Name']}' (subnet: {dst_row['SubnetName']}):")
+        result_text, access = check_nsg_direction(dst_row, "inbound", src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol, asg_membership)
+        print(f"  Inbound:  {result_text}")
+        if access == "DENY":
+            any_deny[0] = True
+        return
+    elif next_hop_type == "Internet":
+        print("  Route table sends this traffic to the internet -- no further Azure hops to trace.")
+        return
+    else:
+        print(f"  Route's next hop type is '{next_hop_type}' -- not something this script follows further.")
+        return
 
 
 def parse_protocol(raw):
