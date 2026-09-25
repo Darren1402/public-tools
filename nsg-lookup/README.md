@@ -8,6 +8,11 @@ This script looks up any IP address in an Azure environment and returns which Su
 
 It replaces the manual workflow of exporting a Resource Graph query to Excel and searching for the right subnet by eye.
 
+## Download
+Get the latest version from [Releases](https://github.com/Darren1402/public-tools/releases?q=nsg-lookup&expanded=true):
+- Mac/Linux/Cloud Shell: `nsg_lookup.py`
+- Windows: `nsg_lookup_win.py`
+
 ## Use Case
 This is designed for quickly identifying network context when working on tickets that reference an IP address, without opening the Portal or maintaining a spreadsheet.
 
