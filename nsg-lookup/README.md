@@ -94,6 +94,11 @@ ip
 
 ---
 
+## Changelog
+See [Releases](https://github.com/Darren1402/public-tools/releases?q=nsg-lookup&expanded=true) for version history.
+
+---
+
 ## Notes
 | Note | Detail |
 |---|---|
