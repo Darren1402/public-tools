@@ -136,8 +136,7 @@ Rows with an invalid protocol are skipped with a message. Both flags can be comb
 ---
 
 ## Changelog
-- **v4.0.0**: Full multi-hop tracing via route tables (no 3-hop cap), new `--max-hops` flag
-- **v3.0.0**: Previous version (see file History)
+See [Releases](https://github.com/Darren1402/public-tools/releases) for version history.
 
 ---
 
