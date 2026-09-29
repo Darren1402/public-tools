@@ -10,8 +10,7 @@ It follows route tables and VNet peering hop by hop, not limited to a fixed numb
 
 ## Download
 Get the latest version from [Releases](https://github.com/Darren1402/public-tools/releases?q=nsg-multihop&expanded=true):
-- Mac/Linux/Cloud Shell: `nsg_check_multihop.py`
-- Windows: `nsg_check_multihop_win.py`
+- All platforms (Windows, macOS, Linux, Cloud Shell): `nsg_check_multihop_universal.py`
 
 ## Use Case
 This is designed for working through firewall or access request tickets where a request's real path crosses multiple NSGs, for example through a firewall and then one or more transit VNets before reaching the final destination.
@@ -42,14 +41,7 @@ It helps:
 
 ## Platform notes
 
-| Platform | Script to use |
-|---|---|
-| macOS / Linux | `nsg_check_multihop.py` |
-| Windows | `nsg_check_multihop_win.py` |
-
-Windows needed a small change to how the script calls `az`, since Windows resolves the Azure CLI as `az.cmd` rather than `az`. `nsg_check_multihop_win.py` is a separate copy with that adjustment, it is Windows-specific and should not be run on macOS or Linux.
-
-Both scripts otherwise contain identical logic, including the same pagination handling, this is not a platform-specific fix, both files check for the same set of possible field names Azure CLI can return for continuing to the next page of results.
+One script, works everywhere: `nsg_check_multihop_universal.py` auto-detects the OS at runtime and adjusts how it calls `az` accordingly, since Windows resolves the Azure CLI as `az.cmd` rather than `az`. There is no separate Windows-only or Mac/Linux-only file anymore.
 
 ---
 
@@ -72,20 +64,19 @@ Documents/
 │   └── my-project/
 ├── Scripts/
 │   └── nsg-multihop-checker/
-│       ├── nsg_check_multihop.py
-│       ├── nsg_check_multihop_win.py
+│       ├── nsg_check_multihop_universal.py
 │       ├── mychecks.csv
 │       └── README.md
 ```
 
-Only the script matching your OS is actually used, the other one can stay in the folder unused or be removed locally. `mychecks.csv` is only needed for batch mode.
+`mychecks.csv` is only needed for batch mode.
 
 ---
 
 ## Usage
 
 ```bash
-python3 nsg_check_multihop.py
+python3 nsg_check_multihop_universal.py
 ```
 
 You will be prompted for Source IP, Destination IP, Port, and Protocol.
@@ -93,13 +84,13 @@ You will be prompted for Source IP, Destination IP, Port, and Protocol.
 Set a different hop limit if a real path is expected to be longer than the default of 10:
 
 ```bash
-python3 nsg_check_multihop.py --max-hops 15
+python3 nsg_check_multihop_universal.py --max-hops 15
 ```
 
 Check multiple pairs from a CSV file:
 
 ```bash
-python3 nsg_check_multihop.py --batch mychecks.csv
+python3 nsg_check_multihop_universal.py --batch mychecks.csv
 ```
 
 The CSV needs this header row, with protocol as `Tcp`, `Udp`, or `Any`:
