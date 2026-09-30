@@ -373,10 +373,35 @@ def resolve_effective_destination(dst_ip, port, protocol, lb_rows):
 
 def trace_path(src_ip, dst_ip_original, port, protocol, rows, lb_rows, asg_membership, max_hops):
     effective_dsts = resolve_effective_destination(dst_ip_original, port, protocol, lb_rows)
+
+    if len(effective_dsts) <= 1:
+        trace_single_path(src_ip, effective_dsts[0], port, protocol, rows, lb_rows, asg_membership, max_hops)
+        return
+
+    # Group backend IPs that land in the same subnet/NSG, since same subnet
+    # means same NSG and the trace result would be identical -- check once
+    # instead of repeating an identical trace for each IP.
+    groups = {}
+    unresolved = []
     for dst_ip in effective_dsts:
-        if len(effective_dsts) > 1:
-            print(f"\n--- Tracing to backend IP {dst_ip} ---")
+        dst_row = find(dst_ip, rows)
+        if not dst_row:
+            unresolved.append(dst_ip)
+            continue
+        group_key = (dst_row["VNetName"], dst_row["SubnetName"])
+        groups.setdefault(group_key, []).append(dst_ip)
+
+    for dst_ip in unresolved:
+        print(f"\n--- Tracing to backend IP {dst_ip} (not in any known subnet, cannot group) ---")
         trace_single_path(src_ip, dst_ip, port, protocol, rows, lb_rows, asg_membership, max_hops)
+
+    for ips_in_group in groups.values():
+        if len(ips_in_group) > 1:
+            print(f"\n--- {', '.join(ips_in_group)} share the same subnet/NSG, "
+                  f"result below applies to all of them ---")
+        else:
+            print(f"\n--- Tracing to backend IP {ips_in_group[0]} ---")
+        trace_single_path(src_ip, ips_in_group[0], port, protocol, rows, lb_rows, asg_membership, max_hops)
 
 
 def trace_single_path(src_ip, dst_ip, port, protocol, rows, lb_rows, asg_membership, max_hops):
