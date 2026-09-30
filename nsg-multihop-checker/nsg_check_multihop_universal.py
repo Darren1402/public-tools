@@ -332,10 +332,18 @@ def check_floating_ip(lb, dst_ip, port, protocol):
     pool = az(["az", "resource", "show", "--ids", pool_id, "-o", "json"])
     if not pool:
         return "unknown", None
-    backend_configs = pool.get("properties", {}).get("backendIPConfigurations", []) or []
+    pool_props = pool.get("properties", {}) or {}
     backend_ips = []
-    for cfg in backend_configs:
+    # NIC-based backend pool (VMs/VMSS in the same VNet as the LB).
+    for cfg in (pool_props.get("backendIPConfigurations", []) or []):
         ip = resolve_ip_via_generic_show(cfg["id"])
+        if ip:
+            backend_ips.append(ip)
+    # IP-based backend pool (plain IP addresses, e.g. cross-VNet or on-prem
+    # targets with no NIC resource in this subscription) -- the IP is
+    # already inline, no extra lookup needed.
+    for addr in (pool_props.get("loadBalancerBackendAddresses", []) or []):
+        ip = (addr.get("properties") or {}).get("ipAddress")
         if ip:
             backend_ips.append(ip)
     if not backend_ips:
@@ -371,37 +379,69 @@ def resolve_effective_destination(dst_ip, port, protocol, lb_rows):
         return [dst_ip]
 
 
-def trace_path(src_ip, dst_ip_original, port, protocol, rows, lb_rows, asg_membership, max_hops):
-    effective_dsts = resolve_effective_destination(dst_ip_original, port, protocol, lb_rows)
+def check_final_destination(dst_ip, dst_row, src_ip, src_row, port, protocol, rows, lb_rows,
+                             asg_membership, hop_num, show_header=True):
+    """
+    Runs the inbound NSG check(s) at the real destination. This is the only
+    place Floating IP / backend-IP substitution happens -- if dst_ip is an
+    LB frontend with Floating IP off, the NSG the packet actually lands on
+    is the backend VM's own NSG, evaluated against the backend's own IP.
+    Returns True if any check here shows DENY.
+    """
+    effective_ips = resolve_effective_destination(dst_ip, port, protocol, lb_rows)
+    any_deny = False
 
-    if len(effective_dsts) <= 1:
-        trace_single_path(src_ip, effective_dsts[0], port, protocol, rows, lb_rows, asg_membership, max_hops)
-        return
+    if len(effective_ips) == 1 and effective_ips[0] == dst_ip:
+        if show_header:
+            print(f"\nHop {hop_num} -- Destination NSG '{dst_row['NSG_Name']}' (subnet: {dst_row['SubnetName']}):")
+        result_text, access = check_nsg_direction(dst_row, "inbound", src_ip, src_row, dst_ip, dst_row,
+                                                   False, port, protocol, asg_membership)
+        print(f"  Inbound:  {result_text}")
+        if access == "DENY":
+            any_deny = True
+        return any_deny
 
-    # Group backend IPs that land in the same subnet/NSG, since same subnet
-    # means same NSG and the trace result would be identical -- check once
-    # instead of repeating an identical trace for each IP.
+    # Backend IP(s) after Floating IP resolution -- re-resolve each one to
+    # its own subnet/NSG (usually, but not always, the same as dst_row) and
+    # group ones that land in the same subnet/NSG since the result would be
+    # identical -- check once instead of repeating an identical check.
     groups = {}
     unresolved = []
-    for dst_ip in effective_dsts:
-        dst_row = find(dst_ip, rows)
-        if not dst_row:
-            unresolved.append(dst_ip)
+    for ip in effective_ips:
+        row = find(ip, rows)
+        if not row:
+            unresolved.append(ip)
             continue
-        group_key = (dst_row["VNetName"], dst_row["SubnetName"])
-        groups.setdefault(group_key, []).append(dst_ip)
+        key = (row["VNetName"], row["SubnetName"])
+        groups.setdefault(key, {"row": row, "ips": []})["ips"].append(ip)
 
-    for dst_ip in unresolved:
-        print(f"\n--- Tracing to backend IP {dst_ip} (not in any known subnet, cannot group) ---")
-        trace_single_path(src_ip, dst_ip, port, protocol, rows, lb_rows, asg_membership, max_hops)
+    for ip in unresolved:
+        print(f"\nHop {hop_num} -- Could not resolve backend IP {ip} to a known subnet -- skipping inbound check.")
 
-    for ips_in_group in groups.values():
+    for group in groups.values():
+        row = group["row"]
+        ips_in_group = group["ips"]
         if len(ips_in_group) > 1:
             print(f"\n--- {', '.join(ips_in_group)} share the same subnet/NSG, "
                   f"result below applies to all of them ---")
-        else:
-            print(f"\n--- Tracing to backend IP {ips_in_group[0]} ---")
-        trace_single_path(src_ip, ips_in_group[0], port, protocol, rows, lb_rows, asg_membership, max_hops)
+        print(f"\nHop {hop_num} -- Destination NSG '{row['NSG_Name']}' (subnet: {row['SubnetName']}):")
+        result_text, access = check_nsg_direction(row, "inbound", src_ip, src_row, ips_in_group[0], row,
+                                                   False, port, protocol, asg_membership)
+        print(f"  Inbound:  {result_text}")
+        if access == "DENY":
+            any_deny = True
+    return any_deny
+
+
+def trace_path(src_ip, dst_ip, port, protocol, rows, lb_rows, asg_membership, max_hops):
+    # NOTE: Floating IP / backend-IP resolution is intentionally NOT done
+    # here. The source's outbound NSG check, and every route-table lookup
+    # along the way, must be evaluated against the ORIGINAL destination
+    # (e.g. the LB frontend IP) -- that's what the packet's destination
+    # header actually says until it reaches the Load Balancer and gets
+    # DNAT'd. Only the final inbound check at the real destination subnet
+    # (see check_final_destination) substitutes the backend IP(s).
+    trace_single_path(src_ip, dst_ip, port, protocol, rows, lb_rows, asg_membership, max_hops)
 
 
 def trace_single_path(src_ip, dst_ip, port, protocol, rows, lb_rows, asg_membership, max_hops):
@@ -465,18 +505,15 @@ def _trace_hop(current, src_ip, src_row, dst_ip, dst_row, dst_is_external, port,
     # Reached the destination's own subnet -- do the final inbound check and stop.
     if not dst_is_external and current["SubnetName"] == dst_row["SubnetName"] and current["VNetName"] == dst_row["VNetName"]:
         if is_first:
-            result_text, access = check_nsg_direction(current, "inbound", src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol, asg_membership)
-            print(f"  Inbound:  {result_text}")
-            if access == "DENY":
+            if check_final_destination(dst_ip, dst_row, src_ip, src_row, port, protocol, rows, lb_rows,
+                                        asg_membership, hop_num, show_header=False):
                 any_deny[0] = True
         return
 
     # Can we reach the destination directly from here (same/peered VNet), no more hops needed?
     if not dst_is_external and can_reach_directly(current, dst_row):
-        print(f"\nHop {hop_num + 1} -- Destination NSG '{dst_row['NSG_Name']}' (subnet: {dst_row['SubnetName']}):")
-        result_text, access = check_nsg_direction(dst_row, "inbound", src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol, asg_membership)
-        print(f"  Inbound:  {result_text}")
-        if access == "DENY":
+        if check_final_destination(dst_ip, dst_row, src_ip, src_row, port, protocol, rows, lb_rows,
+                                    asg_membership, hop_num + 1):
             any_deny[0] = True
         return
 
@@ -539,10 +576,8 @@ def _trace_hop(current, src_ip, src_row, dst_ip, dst_row, dst_is_external, port,
     elif next_hop_type in ("VnetPeering", "VNetLocal"):
         if dst_is_external:
             return
-        print(f"\nHop {hop_num + 1} -- Destination NSG '{dst_row['NSG_Name']}' (subnet: {dst_row['SubnetName']}):")
-        result_text, access = check_nsg_direction(dst_row, "inbound", src_ip, src_row, dst_ip, dst_row, dst_is_external, port, protocol, asg_membership)
-        print(f"  Inbound:  {result_text}")
-        if access == "DENY":
+        if check_final_destination(dst_ip, dst_row, src_ip, src_row, port, protocol, rows, lb_rows,
+                                    asg_membership, hop_num + 1):
             any_deny[0] = True
         return
     elif next_hop_type == "Internet":
