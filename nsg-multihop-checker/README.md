@@ -112,7 +112,7 @@ Rows with an invalid protocol are skipped with a message. Both flags can be comb
 | Route-table dependent hops | A hop only exists if a real Azure route table points to it. Anything a firewall does internally, such as NAT or forwarding out a different interface, with no matching Azure route is invisible. Direct VNet peering does not need a route table and is always detected |
 | Application Security Groups | Supported for both source and destination. Membership is checked against each NIC's current ASG tags, if a NIC's ASG membership just changed, there may be a brief delay before Azure's data reflects it |
 | Load Balancer NAT rules | Only checks standard Load Balancing Rules for Floating IP, not Inbound NAT Rules |
-| Mid-trace Floating IP reliability | Detected correctly at the final destination in every test so far. When a Load Balancer shows up mid-trace, it usually resolves correctly too, but has failed to determine the Floating IP setting on at least one real LB with no clear cause found yet. When it can't determine it, it says so directly rather than guessing, verify manually if this happens |
+| Backend pool types | Supports both NIC-based and IP-based (address-only) backend pools when resolving the real backend IP(s) behind a Load Balancer |
 | No report file | Results print to screen only, including in batch mode. Nothing is saved to disk |
 | Writes | None. Every operation is read-only, nothing is created, changed, or deleted |
 | Real-world delivery | ALLOW at every hop does not guarantee the traffic actually works end to end |
