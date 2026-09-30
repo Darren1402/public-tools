@@ -10,8 +10,7 @@ It replaces the manual workflow of exporting a Resource Graph query to Excel and
 
 ## Download
 Get the latest version from [Releases](https://github.com/Darren1402/public-tools/releases?q=nsg-lookup&expanded=true):
-- Mac/Linux/Cloud Shell: `nsg_lookup.py`
-- Windows: `nsg_lookup_win.py`
+- All platforms (Windows, macOS, Linux, Cloud Shell): `nsg_lookup_universal.py`
 
 ## Use Case
 This is designed for quickly identifying network context when working on tickets that reference an IP address, without opening the Portal or maintaining a spreadsheet.
@@ -36,14 +35,7 @@ It helps:
 
 ## Platform notes
 
-| Platform | Script to use |
-|---|---|
-| macOS / Linux | `nsg_lookup.py` |
-| Windows | `nsg_lookup_win.py` |
-
-Windows needed a small change to how the script calls `az`, since Windows resolves the Azure CLI as `az.cmd` rather than `az`. `nsg_lookup_win.py` is a separate copy with that adjustment, it is Windows-specific and should not be run on macOS or Linux.
-
-Both scripts otherwise contain identical logic, including the same pagination handling, this is not a platform-specific fix, both files check for the same set of possible field names Azure CLI can return for continuing to the next page of results.
+One script, works everywhere: `nsg_lookup_universal.py` auto-detects the OS at runtime and adjusts how it calls `az` accordingly, since Windows resolves the Azure CLI as `az.cmd` rather than `az`. There is no separate Windows-only or Mac/Linux-only file anymore.
 
 ---
 
@@ -66,7 +58,7 @@ Documents/
 │   └── my-project/
 ├── Scripts/
 │   └── nsg-lookup/
-│       ├── nsg_lookup.py
+│       ├── nsg_lookup_universal.py
 │       ├── ips.csv
 │       └── README.md
 ```
@@ -77,12 +69,12 @@ Documents/
 
 ### Single lookup
 ```bash
-python3 nsg_lookup.py
+python3 nsg_lookup_universal.py
 ```
 
 ### Batch lookup
 ```bash
-python3 nsg_lookup.py --batch ips.csv
+python3 nsg_lookup_universal.py --batch ips.csv
 ```
 
 CSV needs one column, `ip`:
