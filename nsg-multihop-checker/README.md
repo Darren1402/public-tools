@@ -75,8 +75,14 @@ Documents/
 
 ## Usage
 
+> **Windows:** type `python` instead of `python3` in every command below, for example `python nsg_check_multihop_universal.py`. On macOS and Linux, use `python3`.
+
 ```bash
+# macOS / Linux / Cloud Shell
 python3 nsg_check_multihop_universal.py
+
+# Windows
+python nsg_check_multihop_universal.py
 ```
 
 You will be prompted for Source IP, Destination IP, Port, and Protocol.
@@ -84,13 +90,21 @@ You will be prompted for Source IP, Destination IP, Port, and Protocol.
 Set a different hop limit if a real path is expected to be longer than the default of 10:
 
 ```bash
+# macOS / Linux / Cloud Shell
 python3 nsg_check_multihop_universal.py --max-hops 15
+
+# Windows
+python nsg_check_multihop_universal.py --max-hops 15
 ```
 
 Check multiple pairs from a CSV file:
 
 ```bash
+# macOS / Linux / Cloud Shell
 python3 nsg_check_multihop_universal.py --batch mychecks.csv
+
+# Windows
+python nsg_check_multihop_universal.py --batch mychecks.csv
 ```
 
 The CSV needs this header row, with protocol as `Tcp`, `Udp`, or `Any`:
