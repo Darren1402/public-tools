@@ -260,6 +260,10 @@ class App:
         self.tree.bind("<Leave>", lambda e: self._hide_tip())
         self.tree.bind("<ButtonPress>", lambda e: self._hide_tip(), add="+")
         self.tree.bind("<ButtonRelease-1>", self._on_tree_release, add="+")
+        # Copy a single value: double-click it, or right-click for a menu.
+        self.tree.bind("<Double-Button-1>", self._on_cell_double_click)
+        for seq in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+            self.tree.bind(seq, self._on_cell_menu)
 
         # Footer.
         foot = ttk.Frame(outer)
@@ -707,6 +711,58 @@ class App:
         self._tip = tip
 
     # ---- copy / export --------------------------------------------------
+
+    def _cell_at(self, event):
+        """Return (row id, column index, column title) under the mouse, or None."""
+        iid = self.tree.identify_row(event.y)
+        col = self.tree.identify_column(event.x)
+        if not iid or iid not in self.full or not col.startswith("#"):
+            return None
+        try:
+            col_id = self.tree.column(col, "id")
+            ci = [c[0] for c in COLUMNS].index(col_id)
+        except (tk.TclError, ValueError):
+            return None
+        return iid, ci, COLUMNS[ci][1]
+
+    def _copy_text(self, text, label):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.status.set(f"Copied {label}")
+
+    def _on_cell_double_click(self, event):
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return None
+        cell = self._cell_at(event)
+        if cell and cell[2] != "#":
+            iid, ci, title = cell
+            self._copy_text(str(self.full[iid][ci]), f"{title}: {self.full[iid][ci]}")
+        return "break"
+
+    def _on_cell_menu(self, event):
+        cell = self._cell_at(event)
+        if not cell:
+            return None
+        iid, ci, title = cell
+        self.tree.selection_set(iid)
+        value = str(self.full[iid][ci])
+        menu = tk.Menu(self.root, tearoff=0)
+        if title != "#":
+            menu.add_command(label=f"Copy {title}",
+                             command=lambda: self._copy_text(value, f"{title}: {value}"))
+        menu.add_command(label="Copy row",
+                         command=lambda: self._copy_text(
+                             "\t".join(str(v) for v in self.full[iid]), "row"))
+        if title != "#":
+            menu.add_command(label=f"Copy all in {title} column",
+                             command=lambda: self._copy_text(
+                                 "\n".join(str(self.full[i][ci]) for i in self.tree.get_children()
+                                           if i in self.full), f"{title} column"))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
 
     def _result_lines(self, selected_only=False):
         items = self.tree.selection() if selected_only and self.tree.selection() \
