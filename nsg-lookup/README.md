@@ -36,6 +36,7 @@ It helps:
 | Results table | One row per IP with Subscription, Resource Group, VNet, Subnet, and NSG. Not found, invalid IPs, and subnets with no NSG are colour coded | Yes | - |
 | Filter | Type in the filter box and only matching rows stay visible, for example `untrust` or `vnet-prod subnet-app`. Several words narrow it down | Yes | - |
 | Auto-fit columns | Columns size to their content and shrink to fit the window. Long values end in `...` and show in full when you hover over them or drag the column divider wider | Yes | - |
+| Copy a single value | Double-click any cell to copy just that value, or right-click for a menu: copy the cell, the whole row, or every value in that column | Yes | - |
 | Copy and export | Copy the results to the clipboard (pastes into Excel or a ticket) or export them to a CSV | Yes | - |
 | Refresh | Re-pulls the subnet data from Azure without restarting | Yes | - |
 | Pagination | Automatically pages through Resource Graph results past the 1,000-row limit | Yes | Yes |
@@ -111,7 +112,7 @@ python nsg_lookup_gui.py
 2. Type an IP in the first box. Press Enter or click **+ Add IP** for another box, or paste a whole list into any box and it splits into rows.
 3. Click **Look up all**. The results table fills in, one numbered row per IP.
 4. Use the **Filter** box above the results to narrow them down. Click the **x** next to it, or press Esc, to show everything again.
-5. Click **Copy results** to paste into a ticket or Excel, or **Export CSV** to save them.
+5. To grab one value, double-click it (or right-click for more options). Click **Copy results** to paste into a ticket or Excel, or **Export CSV** to save them.
 6. After changing subnets in Azure, click **Refresh subnets** to reload the data. Clear all empties the boxes, the results, and the filter so you can start fresh.
 
 Row colours: red means the IP was not found in any known subnet or is not a valid IP address, orange means the subnet has no NSG attached.
@@ -123,6 +124,7 @@ Keyboard shortcuts:
 | Next IP box (adds one at the end of the list) | Enter | Enter |
 | Jump to the filter box | Cmd+F | Ctrl+F |
 | Clear the filter (while in the filter box) | Esc | Esc |
+| Copy one value | Double-click the cell | Double-click the cell |
 | Copy the selected result rows | Cmd+C | Ctrl+C |
 | Full screen on or off | Cmd+Ctrl+F | F11 |
 
