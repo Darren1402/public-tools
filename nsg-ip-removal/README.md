@@ -47,6 +47,27 @@ Python 3.8+. No packages to install (the Excel file is read with built-in Python
 
 ## Usage
 
+### GUI (easiest)
+
+Run the script with no options and a window opens:
+
+```
+python remove_nsg_ips.py        # Windows
+python3 remove_nsg_ips.py       # Mac
+```
+
+1. **Browse** to the tracker Excel. The VNet list fills in from the Excel.
+2. **Browse** to the NSG rules CSV inside `network_rules/nsg_rules` (for example `networkmz_nsg_rules.csv`).
+3. Pick a **VNet** (or `ALL`) and click **Run**.
+4. Results show in a table: green = OK, amber = check (loose name match, partial, skipped), red = problem.
+5. Use **Open output folder** or **Open report** to check the result.
+
+Paths and the last VNet are remembered for next time.
+
+> Windows Python from python.org includes the GUI library (tkinter). On Mac with Homebrew Python, run `brew install python-tk` once if the window does not open.
+
+### Command line
+
 **Mac / Linux**
 ```bash
 python3 remove_nsg_ips.py --excel ~/Documents/tracker.xlsx --repo ~/Documents/terraform-repo --vnet MY-VNET
@@ -54,7 +75,7 @@ python3 remove_nsg_ips.py --excel ~/Documents/tracker.xlsx --repo ~/Documents/te
 
 **Windows**
 ```
-py remove_nsg_ips.py --excel "C:\path\tracker.xlsx" --repo "C:\path\terraform-repo" --vnet MY-VNET
+python remove_nsg_ips.py --excel "C:\path\tracker.xlsx" --repo "C:\path\terraform-repo" --vnet MY-VNET
 ```
 
 Use `--vnet ALL` to process every vnet in the Excel.
@@ -62,7 +83,7 @@ Use `--vnet ALL` to process every vnet in the Excel.
 | Option | Description |
 |---|---|
 | `--excel` | Tracker Excel file (required) |
-| `--repo` | Terraform repo root containing the vnet folders (required) |
+| `--repo` | The NSG rules CSV, its `nsg_rules` folder, the vnet folder, or the repo root (required) |
 | `--vnet` | Vnet to process, must match the folder name, or `ALL` (required) |
 | `--sheet` | Excel sheet name (default: active sheet) |
 | `--report` | Report path (default: `~/Documents/ip_removal_report.csv`) |
@@ -90,6 +111,15 @@ When happy, replace the original with the `_updated` file and run `terraform pla
 | `REMARK_NOT_UNDERSTOOD` | Remark has no recognised instruction |
 
 ## Changelog
+
+### v1.1.1
+- GUI picks the NSG rules CSV directly
+- Command line `--repo` accepts the CSV, the nsg_rules folder, the VNet folder, or the repo root
+
+### v1.1.0
+- Added GUI: run with no options to open it
+- Results table with colour coding, VNet list read from the Excel, remembers last paths
+- Command line mode unchanged
 
 ### v1.0.0
 - Remove IPs from source/dest based on Excel remarks
