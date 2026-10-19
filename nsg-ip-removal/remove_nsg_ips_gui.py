@@ -1,24 +1,19 @@
 #!/usr/bin/env python3
 """
-Remove IPs from Terraform NSG rule CSVs, driven by the Remarks column of the tracker Excel.
+NSG IP Removal (GUI) v1.0.0
 
-Flow:
-  1. Read the tracker Excel (--excel).
-  2. For rows whose Remarks say "Remove from Source Address:" (or Destination),
-     collect the IPs listed under it. "Delete the NSG Rule" rows drop the whole rule row.
-  3. Use the VirtualNetwork column to find <repo>/<VirtualNetwork>/network_rules/nsg_rules/*.csv
-  4. Match the CSV row on rule name + NSG name, remove the IPs.
-  5. Write <name>_updated.csv next to the original. The original is never touched.
-  6. Write a report CSV and print a summary.
+Removes IPs from (or deletes) Azure NSG rules in a Terraform CSV, driven by the
+Remarks column of a tracker Excel.
 
-Usage:
-  python3 remove_nsg_ips.py                     # opens the GUI
-  python3 remove_nsg_ips.py --excel tracker.xlsx --repo /path/to/terraform-repo --vnet MY-VNET
-  python3 remove_nsg_ips.py --excel tracker.xlsx --repo /path/to/terraform-repo --vnet ALL
+  1. Pick the tracker Excel, the Terraform NSG rules CSV, and the VNet.
+  2. Rows with "Remove from Source/Destination Address:" have those IPs removed.
+     Rows with "Delete the NSG Rule" have the whole rule removed.
+  3. Rules are matched on rule name + NSG name.
+  4. Result is written to <name>_updated.csv next to the original. The original is never changed.
 
-No extra packages needed: the Excel file is read with built-in Python only.
+Run:  python3 nsg_ip_removal_gui.py   (Windows: python nsg_ip_removal_gui.py)
+Standard library only. The GUI needs tkinter.
 """
-import argparse
 import csv
 import glob
 import io
@@ -364,22 +359,6 @@ def summary_text(vnet, report, written, skipped_other_vnet, report_path):
     return "\n".join(out)
 
 
-# ---------- command line ----------
-def cli_main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--excel", required=True, help="Tracker .xlsx with the Remarks column")
-    ap.add_argument("--repo", required=True, help="The NSG rules CSV, its nsg_rules folder, the vnet folder, or the repo root")
-    ap.add_argument("--vnet", required=True, help="VirtualNetwork to process (matches folder name), or ALL")
-    ap.add_argument("--sheet", help="Excel sheet name (default: active sheet)")
-    ap.add_argument("--report", default=DEFAULT_REPORT)
-    args = ap.parse_args()
-    try:
-        result = process(args.excel, args.repo, args.vnet, args.sheet, args.report)
-    except FileNotFoundError as e:
-        sys.exit(str(e))
-    print(summary_text(args.vnet, *result, args.report))
-
-
 # ---------- GUI ----------
 SETTINGS = os.path.join(os.path.expanduser("~"), ".nsg_ip_removal.json")
 
@@ -415,7 +394,7 @@ def gui_main():
             pass
 
     root = tk.Tk()
-    root.title("NSG IP Removal")
+    root.title("NSG IP Removal v1.0.0")
     root.geometry("1280x660")
     root.minsize(800, 480)
 
@@ -554,14 +533,14 @@ def gui_main():
 
 
 def main():
-    if len(sys.argv) > 1:
-        cli_main()
-    else:
-        try:
-            gui_main()
-        except ImportError:
-            sys.exit("GUI needs tkinter. Run with --excel/--repo/--vnet for command line mode, "
-                     "or install tkinter (Mac Homebrew: brew install python-tk).")
+    try:
+        import tkinter  # noqa: F401
+    except ImportError:
+        sys.exit("This tool needs tkinter, which is missing from this Python install.\n"
+                 "Windows: re-run the python.org installer and tick 'tcl/tk and IDLE'.\n"
+                 "macOS (Homebrew): brew install python-tk@<your version>, check with python3 --version.\n"
+                 "Linux (Debian/Ubuntu): sudo apt install python3-tk")
+    gui_main()
 
 
 if __name__ == "__main__":
