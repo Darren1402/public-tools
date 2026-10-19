@@ -12,6 +12,7 @@ Flow:
   6. Write a report CSV and print a summary.
 
 Usage:
+  python3 remove_nsg_ips.py                     # opens the GUI
   python3 remove_nsg_ips.py --excel tracker.xlsx --repo /path/to/terraform-repo --vnet MY-VNET
   python3 remove_nsg_ips.py --excel tracker.xlsx --repo /path/to/terraform-repo --vnet ALL
 
@@ -215,38 +216,67 @@ def find_vnet_folder(repo, vnet):
     return None
 
 
+def source_csvs(folder):
+    return [p for p in glob.glob(os.path.join(folder, "*.csv")) if not p.endswith("_updated.csv")]
+
+
+def resolve_nsg_dir(repo, vnet):
+    """
+    Accepts any of:
+      <repo>                                   -> <repo>/<vnet>/network_rules/nsg_rules
+      <repo>/<vnet>                            -> <repo>/<vnet>/network_rules/nsg_rules
+      <repo>/<vnet>/network_rules/nsg_rules    -> used as is
+    """
+    if source_csvs(repo):                                   # pointed straight at nsg_rules
+        return repo
+    direct = os.path.join(repo, "network_rules", "nsg_rules")
+    if os.path.isdir(direct):                               # pointed at the vnet folder
+        return direct
+    folder = find_vnet_folder(repo, vnet)                   # pointed at the repo root
+    if folder:
+        nested = os.path.join(folder, "network_rules", "nsg_rules")
+        if os.path.isdir(nested):
+            return nested
+    return None
+
+
 def load_vnet_csvs(repo, vnet, cache):
     if vnet in cache:
         return cache[vnet]
-    folder = find_vnet_folder(repo, vnet)
-    files = []
-    if folder:
-        for p in glob.glob(os.path.join(folder, "network_rules", "nsg_rules", "*.csv")):
-            if not p.endswith("_updated.csv"):
-                files.append(CsvFile(p))
+    if os.path.isfile(repo):                                # pointed straight at the CSV
+        cache[vnet] = (os.path.dirname(repo), [CsvFile(repo)])
+        return cache[vnet]
+    folder = resolve_nsg_dir(repo, vnet)
+    files = [CsvFile(p) for p in source_csvs(folder)] if folder else []
     cache[vnet] = (folder, files)
     return cache[vnet]
 
 
-# ---------- main ----------
-def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--excel", required=True, help="Tracker .xlsx with the Remarks column")
-    ap.add_argument("--repo", required=True, help="Terraform repo root containing the vnet folders")
-    ap.add_argument("--vnet", required=True, help="VirtualNetwork to process (matches folder name), or ALL")
-    ap.add_argument("--sheet", help="Excel sheet name (default: active sheet)")
-    ap.add_argument("--report", default=os.path.join(DOCS, "ip_removal_report.csv"))
-    args = ap.parse_args()
+# ---------- core ----------
+DEFAULT_REPORT = os.path.join(DOCS, "ip_removal_report.csv")
+REPORT_HEADER = ["excel_row", "vnet", "nsg", "rule", "field", "status", "removed", "not_found", "csv_file"]
 
-    for p in (args.excel, args.repo):
+
+def list_vnets(excel, sheet=None):
+    """Unique VirtualNetwork values in the tracker, in order of appearance."""
+    seen = []
+    for row in read_tracker(excel, sheet):
+        if row["vnet"] and row["vnet"] not in seen:
+            seen.append(row["vnet"])
+    return seen
+
+
+def process(excel, repo, vnet, sheet=None, report_path=DEFAULT_REPORT):
+    """Run the whole job. Returns (report_rows, written_files, skipped_other_vnet)."""
+    for p in (excel, repo):
         if not os.path.exists(p):
-            sys.exit(f"Not found: {p}")
+            raise FileNotFoundError(f"Not found: {p}")
 
     cache, report = {}, []
     skipped_other_vnet = 0
 
-    for row in read_tracker(args.excel, args.sheet):
-        if args.vnet.upper() != "ALL" and row["vnet"].lower() != args.vnet.lower():
+    for row in read_tracker(excel, sheet):
+        if vnet.upper() != "ALL" and row["vnet"].lower() != vnet.lower():
             skipped_other_vnet += 1
             continue
         is_delete = "delete the nsg rule" in row["remark"].lower()
@@ -255,7 +285,7 @@ def main():
             report.append([row["excel_row"], row["vnet"], row["nsg"], row["rule"], "", "REMARK_NOT_UNDERSTOOD", "", "", ""])
             continue
 
-        folder, files = load_vnet_csvs(args.repo, row["vnet"], cache)
+        folder, files = load_vnet_csvs(repo, row["vnet"], cache)
         if not folder:
             report.append([row["excel_row"], row["vnet"], row["nsg"], row["rule"], "", "VNET_FOLDER_NOT_FOUND", "", "", ""])
             continue
@@ -300,35 +330,238 @@ def main():
                 report.append([row["excel_row"], row["vnet"], row["nsg"], row["rule"], field, status,
                                ";".join(removed), ";".join(not_found), os.path.basename(cf.path)])
 
-    # Write updated copies
     written = []
     for folder, files in cache.values():
         for cf in files:
             if cf.changes:
                 written.append((cf.save_copy(), cf.changes))
 
-    with open(args.report, "w", newline="", encoding="utf-8") as f:
+    with open(report_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["excel_row", "vnet", "nsg", "rule", "field", "status", "removed", "not_found", "csv_file"])
+        w.writerow(REPORT_HEADER)
         w.writerows(report)
 
-    # Summary
+    return report, written, skipped_other_vnet
+
+
+def summary_text(vnet, report, written, skipped_other_vnet, report_path):
     counts = {}
     for r in report:
         key = r[5].split(" (")[0]
         counts[key] = counts.get(key, 0) + 1
-    print(f"VNet filter : {args.vnet}")
-    print(f"Ignored     : {skipped_other_vnet} row(s) for other vnets\n")
-    print("Results:")
+    out = [f"VNet filter : {vnet}", f"Ignored     : {skipped_other_vnet} row(s) for other vnets", "", "Results:"]
     for k, v in sorted(counts.items()):
-        print(f"  {k:24} {v}")
+        out.append(f"  {k:24} {v}")
     for r in report:
         if r[5] not in ("REMOVED", "RULE_DELETED"):
-            print(f"  ! row {r[0]}: {r[3]}  ->  {r[5]}" + (f"  (not found: {r[7]})" if r[7] else ""))
-    print("\nUpdated copies:" if written else "\nNo changes, no copy written.")
+            out.append(f"  ! row {r[0]}: {r[3]}  ->  {r[5]}" + (f"  (not found: {r[7]})" if r[7] else ""))
+    out.append("")
+    out.append("Updated copies:" if written else "No changes, no copy written.")
     for p, n in written:
-        print(f"  {p}  ({n} change(s))")
-    print(f"\nReport: {args.report}")
+        out.append(f"  {p}  ({n} change(s))")
+    out.append("")
+    out.append(f"Report: {report_path}")
+    return "\n".join(out)
+
+
+# ---------- command line ----------
+def cli_main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--excel", required=True, help="Tracker .xlsx with the Remarks column")
+    ap.add_argument("--repo", required=True, help="The NSG rules CSV, its nsg_rules folder, the vnet folder, or the repo root")
+    ap.add_argument("--vnet", required=True, help="VirtualNetwork to process (matches folder name), or ALL")
+    ap.add_argument("--sheet", help="Excel sheet name (default: active sheet)")
+    ap.add_argument("--report", default=DEFAULT_REPORT)
+    args = ap.parse_args()
+    try:
+        result = process(args.excel, args.repo, args.vnet, args.sheet, args.report)
+    except FileNotFoundError as e:
+        sys.exit(str(e))
+    print(summary_text(args.vnet, *result, args.report))
+
+
+# ---------- GUI ----------
+SETTINGS = os.path.join(os.path.expanduser("~"), ".nsg_ip_removal.json")
+
+
+def open_path(path):
+    """Open a file or folder with the OS default app."""
+    import subprocess
+    if sys.platform.startswith("win"):
+        os.startfile(path)  # noqa
+    elif sys.platform == "darwin":
+        subprocess.run(["open", path])
+    else:
+        subprocess.run(["xdg-open", path])
+
+
+def gui_main():
+    import json
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox
+
+    def load_settings():
+        try:
+            with open(SETTINGS, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def save_settings():
+        try:
+            with open(SETTINGS, "w", encoding="utf-8") as f:
+                json.dump({"excel": excel_var.get(), "repo": repo_var.get(), "vnet": vnet_var.get()}, f)
+        except Exception:
+            pass
+
+    root = tk.Tk()
+    root.title("NSG IP Removal")
+    root.geometry("1280x660")
+    root.minsize(800, 480)
+
+    saved = load_settings()
+    excel_var = tk.StringVar(value=saved.get("excel", ""))
+    repo_var = tk.StringVar(value=saved.get("repo", ""))
+    vnet_var = tk.StringVar(value=saved.get("vnet", ""))
+    status_var = tk.StringVar(value="Pick the Excel file and the Terraform repo folder, choose a VNet, then click Run.")
+    state = {"written": [], "report": DEFAULT_REPORT}
+
+    top = ttk.Frame(root, padding=12)
+    top.pack(fill="x")
+    top.columnconfigure(1, weight=1)
+
+    def refresh_vnets(*_):
+        path = excel_var.get()
+        if os.path.isfile(path):
+            try:
+                vnets = list_vnets(path)
+                vnet_box["values"] = vnets + ["ALL"]
+                if vnet_var.get() not in vnet_box["values"] and vnets:
+                    vnet_var.set(vnets[0])
+            except SystemExit as e:
+                messagebox.showerror("Excel problem", str(e))
+            except Exception as e:
+                messagebox.showerror("Excel problem", f"Could not read the Excel file:\n{e}")
+
+    def pick_excel():
+        p = filedialog.askopenfilename(title="Select tracker Excel", filetypes=[("Excel", "*.xlsx"), ("All files", "*.*")])
+        if p:
+            excel_var.set(os.path.normpath(p))
+            refresh_vnets()
+
+    def pick_repo():
+        start = repo_var.get()
+        start = os.path.dirname(start) if os.path.isfile(start) else (start if os.path.isdir(start) else os.path.expanduser("~"))
+        p = filedialog.askopenfilename(title="Select the NSG rules CSV (in network_rules/nsg_rules)",
+                                       initialdir=start, filetypes=[("CSV", "*.csv"), ("All files", "*.*")])
+        if p:
+            repo_var.set(os.path.normpath(p))
+
+    ttk.Label(top, text="Excel tracker").grid(row=0, column=0, sticky="w", pady=4)
+    ttk.Entry(top, textvariable=excel_var).grid(row=0, column=1, sticky="ew", padx=8)
+    ttk.Button(top, text="Browse...", command=pick_excel).grid(row=0, column=2)
+
+    ttk.Label(top, text="Terraform CSV").grid(row=1, column=0, sticky="w", pady=4)
+    ttk.Entry(top, textvariable=repo_var).grid(row=1, column=1, sticky="ew", padx=8)
+    ttk.Button(top, text="Browse...", command=pick_repo).grid(row=1, column=2)
+
+    ttk.Label(top, text="VNet").grid(row=2, column=0, sticky="w", pady=4)
+    vnet_box = ttk.Combobox(top, textvariable=vnet_var, width=40)
+    vnet_box.grid(row=2, column=1, sticky="w", padx=8)
+
+    btns = ttk.Frame(top)
+    btns.grid(row=3, column=0, columnspan=3, sticky="w", pady=(10, 0))
+    run_btn = ttk.Button(btns, text="Run")
+    run_btn.pack(side="left")
+    folder_btn = ttk.Button(btns, text="Open output folder", state="disabled",
+                            command=lambda: open_path(os.path.dirname(state["written"][0][0])))
+    folder_btn.pack(side="left", padx=8)
+    report_btn = ttk.Button(btns, text="Open report", state="disabled", command=lambda: open_path(state["report"]))
+    report_btn.pack(side="left")
+
+    ttk.Label(root, textvariable=status_var, padding=(12, 4)).pack(fill="x")
+
+    cols = ("row", "rule", "field", "status", "removed", "not_found", "note", "file")
+    heads = ("Row", "Rule", "Field", "Status", "Removed", "Not found", "Note", "CSV file")
+    widths = (45, 400, 75, 175, 240, 120, 380, 200)
+    table_frame = ttk.Frame(root, padding=(12, 0, 12, 12))
+    table_frame.pack(fill="both", expand=True)
+    tree = ttk.Treeview(table_frame, columns=cols, show="headings")
+    for c, h, w in zip(cols, heads, widths):
+        tree.heading(c, text=h)
+        tree.column(c, width=w, anchor="w", stretch=(c == "rule"))
+    ysb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+    xsb = ttk.Scrollbar(table_frame, orient="horizontal", command=tree.xview)
+    tree.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
+    tree.grid(row=0, column=0, sticky="nsew")
+    ysb.grid(row=0, column=1, sticky="ns")
+    xsb.grid(row=1, column=0, sticky="ew")
+    table_frame.rowconfigure(0, weight=1)
+    table_frame.columnconfigure(0, weight=1)
+    tree.tag_configure("ok", foreground="#1a7f37")
+    tree.tag_configure("warn", foreground="#9a6700")
+    tree.tag_configure("bad", foreground="#cf222e")
+
+    def run():
+        excel, repo, vnet = excel_var.get().strip(), repo_var.get().strip(), vnet_var.get().strip()
+        if not (excel and repo and vnet):
+            messagebox.showwarning("Missing input", "Please fill in Excel tracker, Terraform CSV and VNet.")
+            return
+        save_settings()
+        tree.delete(*tree.get_children())
+        status_var.set("Running...")
+        root.update_idletasks()
+        try:
+            report, written, skipped = process(excel, repo, vnet, report_path=DEFAULT_REPORT)
+        except SystemExit as e:
+            status_var.set("Failed.")
+            messagebox.showerror("Error", str(e))
+            return
+        except Exception as e:
+            status_var.set("Failed.")
+            messagebox.showerror("Error", f"{type(e).__name__}: {e}")
+            return
+
+        for r in report:
+            st = r[5]
+            if st.startswith(("REMOVED", "RULE_DELETED")):
+                tag = "warn" if "(CSV name:" in st else "ok"
+            elif st.startswith(("PARTIAL", "NOTHING_TO_REMOVE", "SKIPPED")):
+                tag = "warn"
+            else:
+                tag = "bad"
+            base, _, note = st.partition(" (")
+            note = note.rstrip(")")
+            tree.insert("", "end", values=(r[0], r[3], r[4], base, r[6].replace(";", ", "),
+                                           r[7].replace(";", ", "), note, r[8]), tags=(tag,))
+
+        state["written"], state["report"] = written, DEFAULT_REPORT
+        folder_btn.configure(state="normal" if written else "disabled")
+        report_btn.configure(state="normal")
+        counts = {}
+        for r in report:
+            k = r[5].split(" (")[0]
+            counts[k] = counts.get(k, 0) + 1
+        parts = ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "nothing matched"
+        files = "; ".join(os.path.basename(p) for p, _ in written) or "no file written"
+        status_var.set(f"Done. {parts}.   Output: {files}   (green = OK, amber = check, red = problem)")
+
+    run_btn.configure(command=run)
+    vnet_box.bind("<Button-1>", lambda e: refresh_vnets() if not vnet_box["values"] else None)
+    if excel_var.get():
+        root.after(100, refresh_vnets)
+    root.mainloop()
+
+
+def main():
+    if len(sys.argv) > 1:
+        cli_main()
+    else:
+        try:
+            gui_main()
+        except ImportError:
+            sys.exit("GUI needs tkinter. Run with --excel/--repo/--vnet for command line mode, "
+                     "or install tkinter (Mac Homebrew: brew install python-tk).")
 
 
 if __name__ == "__main__":
