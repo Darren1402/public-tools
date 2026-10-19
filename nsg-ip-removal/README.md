@@ -38,6 +38,7 @@ It helps:
 | Never empties a rule | If removing IPs would leave the field empty, the rule is skipped and flagged for a manual decision |
 | Stable IDs | `local_id` values are not renumbered, so Terraform only sees the rules that actually changed |
 | Keeps formatting | Keeps the CSV's original column order, line endings, and encoding |
+| Self-check | After saving, re-reads the output file and confirms every reported change is really in it. The status line says "all changes confirmed" |
 | Report | Saves `ip_removal_report.csv` to Documents. **Open report** and **Open output folder** buttons |
 | Remembers paths | The Excel, CSV, and VNet from the last run are filled in next time |
 | No pip installs | Standard library only, including reading the Excel file |
@@ -141,6 +142,7 @@ Row colours: green means done, amber means check it (loose name match, partial, 
 | `RULE_NOT_FOUND` | No CSV rule matched the rule name + NSG name |
 | `VNET_FOLDER_NOT_FOUND` | The CSV could not be found |
 | `REMARK_NOT_UNDERSTOOD` | Remark has no recognised instruction |
+| `VERIFY_FAILED` | The change is in the report but not in the output file. Do not use the output, report it |
 
 ---
 
@@ -152,6 +154,7 @@ See [Releases](https://github.com/Darren1402/public-tools/releases?q=nsg-ip-remo
 ## Notes
 | Note | Detail |
 |---|---|
+| VNet name spelling | The Excel can spell the same VNet with different capitals (`CMT-...-EMPTY` and `cmt-...-Empty`). They are treated as the same VNet |
 | Original is never changed | All changes go to `<name>_updated.csv`. Each run starts from the original again, so it is safe to re-run |
 | Does not touch Azure | The tool only edits a local CSV. Changes reach Azure only when you apply them through Terraform |
 | Check the CSV name | If the Note column shows `CSV name: ...`, the Excel and CSV spell the rule differently. The change was still made, check it is the right rule |
