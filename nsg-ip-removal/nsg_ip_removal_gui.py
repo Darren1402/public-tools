@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NSG IP Removal (GUI) v1.0.0
+NSG IP Removal (GUI) v1.0.1
 
 Removes IPs from (or deletes) Azure NSG rules in a Terraform CSV, driven by the
 Remarks column of a tracker Excel.
@@ -235,16 +235,62 @@ def resolve_nsg_dir(repo, vnet):
     return None
 
 
-def load_vnet_csvs(repo, vnet, cache):
-    if vnet in cache:
-        return cache[vnet]
+def load_vnet_csvs(repo, vnet, cache, file_cache):
+    """
+    cache:      vnet name (case-insensitive) -> (folder, [CsvFile])
+    file_cache: real CSV path -> CsvFile, so each CSV is loaded ONCE per run even if
+                the Excel spells the VNet differently (e.g. CMT-...-EMPTY vs cmt-...-Empty).
+                Loading it twice would let one copy overwrite the other's changes on save.
+    """
+    key = vnet.strip().lower()
+    if key in cache:
+        return cache[key]
+
+    def get(path):
+        real = os.path.normcase(os.path.realpath(path))
+        if real not in file_cache:
+            file_cache[real] = CsvFile(path)
+        return file_cache[real]
+
     if os.path.isfile(repo):                                # pointed straight at the CSV
-        cache[vnet] = (os.path.dirname(repo), [CsvFile(repo)])
-        return cache[vnet]
+        cache[key] = (os.path.dirname(repo), [get(repo)])
+        return cache[key]
     folder = resolve_nsg_dir(repo, vnet)
-    files = [CsvFile(p) for p in source_csvs(folder)] if folder else []
-    cache[vnet] = (folder, files)
-    return cache[vnet]
+    files = [get(p) for p in source_csvs(folder)] if folder else []
+    cache[key] = (folder, files)
+    return cache[key]
+
+
+def verify(report, file_cache):
+    """
+    Re-read every written _updated.csv and confirm each reported change is really in it.
+    Any mismatch is marked VERIFY_FAILED so the report can never claim a change the file doesn't have.
+    """
+    fresh = {}
+    for cf in file_cache.values():
+        if cf.changes and os.path.exists(cf.out_path()):
+            fresh[cf.path] = CsvFile(cf.out_path())
+
+    for r in report:
+        if len(r) < 10 or r[9] not in fresh:
+            continue
+        base = r[5].split(" (")[0]
+        if base not in ("RULE_DELETED", "REMOVED", "PARTIAL"):
+            continue
+        out = fresh[r[9]]
+        n, nm = out.col("nsg"), out.col("name")
+        rows = [line for line in out.rows[1:]
+                if len(line) > max(n, nm) and loose(line[nm]) == loose(r[3]) and loose(line[n]) == loose(r[2])]
+        if base == "RULE_DELETED":
+            if rows:
+                r[5] = "VERIFY_FAILED (rule still in output file)"
+        else:
+            c = out.col(r[4])
+            targets = {norm(i) for i in r[6].split(";") if i}
+            if not rows:
+                r[5] = "VERIFY_FAILED (rule missing from output file)"
+            elif any(norm(e) in targets for line in rows for e in line[c].split(";") if e.strip()):
+                r[5] = "VERIFY_FAILED (IP still in output file)"
 
 
 # ---------- core ----------
@@ -254,9 +300,10 @@ REPORT_HEADER = ["excel_row", "vnet", "nsg", "rule", "field", "status", "removed
 
 def list_vnets(excel, sheet=None):
     """Unique VirtualNetwork values in the tracker, in order of appearance."""
-    seen = []
+    seen, keys = [], set()
     for row in read_tracker(excel, sheet):
-        if row["vnet"] and row["vnet"] not in seen:
+        if row["vnet"] and row["vnet"].strip().lower() not in keys:
+            keys.add(row["vnet"].strip().lower())
             seen.append(row["vnet"])
     return seen
 
@@ -267,7 +314,7 @@ def process(excel, repo, vnet, sheet=None, report_path=DEFAULT_REPORT):
         if not os.path.exists(p):
             raise FileNotFoundError(f"Not found: {p}")
 
-    cache, report = {}, []
+    cache, file_cache, report = {}, {}, []
     skipped_other_vnet = 0
 
     for row in read_tracker(excel, sheet):
@@ -280,7 +327,7 @@ def process(excel, repo, vnet, sheet=None, report_path=DEFAULT_REPORT):
             report.append([row["excel_row"], row["vnet"], row["nsg"], row["rule"], "", "REMARK_NOT_UNDERSTOOD", "", "", ""])
             continue
 
-        folder, files = load_vnet_csvs(repo, row["vnet"], cache)
+        folder, files = load_vnet_csvs(repo, row["vnet"], cache, file_cache)
         if not folder:
             report.append([row["excel_row"], row["vnet"], row["nsg"], row["rule"], "", "VNET_FOLDER_NOT_FOUND", "", "", ""])
             continue
@@ -303,7 +350,7 @@ def process(excel, repo, vnet, sheet=None, report_path=DEFAULT_REPORT):
                 cf.changes += 1
                 status = "RULE_DELETED" + ("" if exact else f" (CSV name: {csv_name})")
                 report.append([row["excel_row"], row["vnet"], row["nsg"], row["rule"], "whole rule", status,
-                               "", "", os.path.basename(cf.path)])
+                               "", "", os.path.basename(cf.path), cf.path])
             continue
 
         for cf, i, exact, csv_name in matches:
@@ -323,18 +370,19 @@ def process(excel, repo, vnet, sheet=None, report_path=DEFAULT_REPORT):
                 if not exact:
                     status += f" (CSV name: {csv_name})"
                 report.append([row["excel_row"], row["vnet"], row["nsg"], row["rule"], field, status,
-                               ";".join(removed), ";".join(not_found), os.path.basename(cf.path)])
+                               ";".join(removed), ";".join(not_found), os.path.basename(cf.path), cf.path])
 
     written = []
-    for folder, files in cache.values():
-        for cf in files:
-            if cf.changes:
-                written.append((cf.save_copy(), cf.changes))
+    for cf in file_cache.values():        # each CSV exactly once
+        if cf.changes:
+            written.append((cf.save_copy(), cf.changes))
+
+    verify(report, file_cache)
 
     with open(report_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(REPORT_HEADER)
-        w.writerows(report)
+        w.writerows(r[:9] for r in report)
 
     return report, written, skipped_other_vnet
 
@@ -394,7 +442,7 @@ def gui_main():
             pass
 
     root = tk.Tk()
-    root.title("NSG IP Removal v1.0.0")
+    root.title("NSG IP Removal v1.0.1")
     root.geometry("1280x660")
     root.minsize(800, 480)
 
@@ -523,7 +571,10 @@ def gui_main():
             counts[k] = counts.get(k, 0) + 1
         parts = ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "nothing matched"
         files = "; ".join(os.path.basename(p) for p, _ in written) or "no file written"
-        status_var.set(f"Done. {parts}.   Output: {files}   (green = OK, amber = check, red = problem)")
+        failed = sum(1 for r in report if r[5].startswith("VERIFY_FAILED"))
+        check = "Output file checked: all changes confirmed." if written and not failed else \
+                (f"WARNING: {failed} change(s) not found in the output file, see red rows." if failed else "")
+        status_var.set(f"Done. {parts}.   Output: {files}   {check}   (green = OK, amber = check, red = problem)")
 
     run_btn.configure(command=run)
     vnet_box.bind("<Button-1>", lambda e: refresh_vnets() if not vnet_box["values"] else None)
