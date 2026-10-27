@@ -38,6 +38,9 @@ It helps:
 | Never empties a rule | If removing IPs would leave the field empty, the rule is skipped and flagged for a manual decision |
 | Stable IDs | `local_id` values are not renumbered, so Terraform only sees the rules that actually changed |
 | Keeps formatting | Keeps the CSV's original column order, line endings, and encoding |
+| Copy a single value | Double-click any cell to copy just that value, or right-click for a menu: copy the cell, the selected rows, or every value in that column |
+| Copy results | **Copy results** copies the whole table with headers. Pastes straight into Excel or a ticket |
+| Copy selected rows | Select one or more rows (Shift or Ctrl/Cmd click) and press Ctrl+C (Cmd+C on Mac) |
 | Self-check | After saving, re-reads the output file and confirms every reported change is really in it. The status line says "all changes confirmed" |
 | Report | Saves `ip_removal_report.csv` to Documents. **Open report** and **Open output folder** buttons |
 | Remembers paths | The Excel, CSV, and VNet from the last run are filled in next time |
@@ -119,6 +122,7 @@ python nsg_ip_removal_gui.py
 2. Next to **Terraform CSV**, click **Browse** and pick the NSG rules CSV in `network_rules/nsg_rules`.
 3. Pick the **VNet**, or `ALL`, and click **Run**.
 4. Check the results table. Then click **Open output folder** to find `<name>_updated.csv`.
+   To copy results into a ticket, click **Copy results**, double-click a cell, or right-click for more options.
 5. Compare the original and updated CSV, then replace the original with the updated file and run `terraform plan`.
 
 To compare the two files:
@@ -129,6 +133,15 @@ diff nsg_rules.csv nsg_rules_updated.csv
 # Windows
 fc nsg_rules.csv nsg_rules_updated.csv
 ```
+
+Keyboard shortcuts:
+
+| Action | macOS | Windows and Linux |
+|---|---|---|
+| Copy one value | Double-click the cell | Double-click the cell |
+| Copy the selected result rows | Cmd+C | Ctrl+C |
+| Select all result rows | Cmd+A | Ctrl+A |
+| Right-click menu | Right-click or Ctrl+click | Right-click |
 
 Row colours: green means done, amber means check it (loose name match, partial, or skipped), red means a problem (rule not found, or remark not understood).
 
