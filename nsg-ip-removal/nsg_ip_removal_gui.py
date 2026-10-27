@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NSG IP Removal (GUI) v1.0.1
+NSG IP Removal (GUI) v1.1.0
 
 Removes IPs from (or deletes) Azure NSG rules in a Terraform CSV, driven by the
 Remarks column of a tracker Excel.
@@ -442,7 +442,7 @@ def gui_main():
             pass
 
     root = tk.Tk()
-    root.title("NSG IP Removal v1.0.1")
+    root.title("NSG IP Removal v1.1.0")
     root.geometry("1280x660")
     root.minsize(800, 480)
 
@@ -505,15 +505,21 @@ def gui_main():
     folder_btn.pack(side="left", padx=8)
     report_btn = ttk.Button(btns, text="Open report", state="disabled", command=lambda: open_path(state["report"]))
     report_btn.pack(side="left")
+    copy_btn = ttk.Button(btns, text="Copy results", state="disabled")
+    copy_btn.pack(side="left", padx=8)
+    copied_var = tk.StringVar(value="")
+    ttk.Label(btns, textvariable=copied_var, foreground="#1a7f37").pack(side="left", padx=4)
 
     ttk.Label(root, textvariable=status_var, padding=(12, 4)).pack(fill="x")
+    hint_var = tk.StringVar(value="")
+    ttk.Label(root, textvariable=hint_var, padding=(12, 0, 12, 4), foreground="#666666").pack(fill="x")
 
     cols = ("row", "rule", "field", "status", "removed", "not_found", "note", "file")
     heads = ("Row", "Rule", "Field", "Status", "Removed", "Not found", "Note", "CSV file")
     widths = (45, 400, 75, 175, 240, 120, 380, 200)
     table_frame = ttk.Frame(root, padding=(12, 0, 12, 12))
     table_frame.pack(fill="both", expand=True)
-    tree = ttk.Treeview(table_frame, columns=cols, show="headings")
+    tree = ttk.Treeview(table_frame, columns=cols, show="headings", selectmode="extended")
     for c, h, w in zip(cols, heads, widths):
         tree.heading(c, text=h)
         tree.column(c, width=w, anchor="w", stretch=(c == "rule"))
@@ -528,6 +534,90 @@ def gui_main():
     tree.tag_configure("ok", foreground="#1a7f37")
     tree.tag_configure("warn", foreground="#9a6700")
     tree.tag_configure("bad", foreground="#cf222e")
+
+    # ----- copy helpers (same behaviour as nsg-lookup) -----
+    mod = "Command" if sys.platform == "darwin" else "Control"
+    copy_key = "Cmd+C" if sys.platform == "darwin" else "Ctrl+C"
+    hint = (f"Green = OK, amber = check, red = problem.   Double-click a cell to copy it. "
+            f"Right-click for more. Select rows and press {copy_key} to copy them.")
+    clear_job = {"id": None}
+
+    def to_clipboard(text, what):
+        root.clipboard_clear()
+        root.clipboard_append(text)
+        root.update()  # keep the clipboard after the window loses focus
+        copied_var.set(f"Copied {what}")
+        if clear_job["id"]:
+            root.after_cancel(clear_job["id"])
+        clear_job["id"] = root.after(2500, lambda: copied_var.set(""))
+
+    def rows_tsv(items, header=True):
+        lines = ["\t".join(heads)] if header else []
+        for it in items:
+            lines.append("\t".join(str(v) for v in tree.item(it, "values")))
+        return "\n".join(lines)
+
+    def cell_at(event):
+        item = tree.identify_row(event.y)
+        col = tree.identify_column(event.x)  # '#1', '#2', ...
+        if not item or not col:
+            return None, None
+        return item, int(col[1:]) - 1
+
+    def copy_cell(item, idx):
+        val = str(tree.item(item, "values")[idx])
+        to_clipboard(val, f"{heads[idx]}: {val[:60]}" if val else f"{heads[idx]} (empty)")
+
+    def copy_rows(items):
+        if items:
+            to_clipboard(rows_tsv(items), f"{len(items)} row(s)")
+
+    def copy_column(idx):
+        vals = [str(tree.item(it, "values")[idx]) for it in tree.get_children()]
+        to_clipboard("\n".join(vals), f"{heads[idx]} column ({len(vals)} values)")
+
+    def copy_all():
+        items = tree.get_children()
+        if items:
+            to_clipboard(rows_tsv(items), f"all {len(items)} row(s), paste into Excel or a ticket")
+
+    def on_double(event):
+        if tree.identify_region(event.x, event.y) != "cell":
+            return
+        item, idx = cell_at(event)
+        if item is not None:
+            copy_cell(item, idx)
+        return "break"
+
+    menu = tk.Menu(root, tearoff=0)
+
+    def on_right(event):
+        item, idx = cell_at(event)
+        if item is None:
+            return
+        if item not in tree.selection():
+            tree.selection_set(item)
+        sel = tree.selection()
+        menu.delete(0, "end")
+        menu.add_command(label=f"Copy cell ({heads[idx]})", command=lambda: copy_cell(item, idx))
+        menu.add_command(label=f"Copy row{'s' if len(sel) > 1 else ''} ({len(sel)})", command=lambda: copy_rows(sel))
+        menu.add_command(label=f"Copy {heads[idx]} column", command=lambda: copy_column(idx))
+        menu.add_separator()
+        menu.add_command(label="Copy all results", command=copy_all)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    tree.bind("<Double-1>", on_double)
+    for seq in ("<Button-3>", "<Button-2>" if sys.platform == "darwin" else None,
+                "<Control-Button-1>" if sys.platform == "darwin" else None):
+        if seq:
+            tree.bind(seq, on_right)
+    tree.bind(f"<{mod}-c>", lambda e: copy_rows(tree.selection()))
+    tree.bind(f"<{mod}-C>", lambda e: copy_rows(tree.selection()))
+    tree.bind(f"<{mod}-a>", lambda e: (tree.selection_set(tree.get_children()), "break")[1])
+    copy_btn.configure(command=copy_all)
 
     def run():
         excel, repo, vnet = excel_var.get().strip(), repo_var.get().strip(), vnet_var.get().strip()
@@ -565,6 +655,8 @@ def gui_main():
         state["written"], state["report"] = written, DEFAULT_REPORT
         folder_btn.configure(state="normal" if written else "disabled")
         report_btn.configure(state="normal")
+        copy_btn.configure(state="normal" if report else "disabled")
+        tree.focus_set()
         counts = {}
         for r in report:
             k = r[5].split(" (")[0]
@@ -574,7 +666,8 @@ def gui_main():
         failed = sum(1 for r in report if r[5].startswith("VERIFY_FAILED"))
         check = "Output file checked: all changes confirmed." if written and not failed else \
                 (f"WARNING: {failed} change(s) not found in the output file, see red rows." if failed else "")
-        status_var.set(f"Done. {parts}.   Output: {files}   {check}   (green = OK, amber = check, red = problem)")
+        status_var.set(f"Done. {parts}.   Output: {files}   {check}")
+        hint_var.set(hint)
 
     run_btn.configure(command=run)
     vnet_box.bind("<Button-1>", lambda e: refresh_vnets() if not vnet_box["values"] else None)
