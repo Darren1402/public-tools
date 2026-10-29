@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-NSG Rule Checker v1.0.0
+NSG Rule Checker v1.1.0
 
-Checks an NSG rules sheet (.xlsx tracker or the Terraform nsg_rules .csv)
-for the mistakes that break a Terraform deploy, and saves a fixed copy.
+Checks an NSG rules sheet or a route table sheet (.xlsx tracker or the
+Terraform .csv) for the mistakes that break a Terraform deploy, and saves
+a fixed copy.
 
   1. Pick the .xlsx or .csv file (and the sheet, for .xlsx).
   2. Click Check. Each problem cell is listed with a suggested fix.
@@ -32,7 +33,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".nsg_rule_checker_gui.json")
 
 # ---------- reference data ----------
@@ -69,6 +70,11 @@ DIRECTIONS = {"inbound": "Inbound", "outbound": "Outbound"}
 ACCESS = {"allow": "Allow", "deny": "Deny"}
 PROTOCOLS = {"tcp": "Tcp", "udp": "Udp", "icmp": "Icmp", "esp": "Esp", "ah": "Ah",
              "*": "*", "any": "*"}
+
+NEXT_HOP_TYPES = {"virtualappliance": "VirtualAppliance",
+                  "virtualnetworkgateway": "VirtualNetworkGateway",
+                  "vnetlocal": "VnetLocal", "internet": "Internet", "none": "None"}
+NAME_RE = r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,78}[A-Za-z0-9_])?"
 
 AUTO, CHECK, MANUAL, NOTE = "Auto", "Check", "Manual", "Note"
 EDITED, SKIPPED = "Edited", "Skipped"
@@ -107,6 +113,7 @@ class Sheet:
         self.csv_records = []
         self.csv_raws = []
         self.csv_encoding = "utf-8"
+        self.mode = "nsg"         # "nsg" or "rt"
 
 
 class Finding:
@@ -124,6 +131,8 @@ class Finding:
         self.orig_status = status
         self.ref = ref
         self.row_level = row_level
+        self.group = ""
+        self.raw = current
 
     @property
     def issue_text(self):
@@ -382,18 +391,41 @@ def read_csv(path):
     return sh
 
 
+def classify_rt_header(h):
+    k = re.sub(r"[^a-z]", "", (h or "").lower())
+    if not k:
+        return "other"
+    if "nexthop" in k or ("next" in k and ("hop" in k or "type" in k)):
+        return "nexthoptype" if "type" in k else "nexthopip"
+    if "routetable" in k or k in ("rt", "rtname", "udr", "udrname"):
+        return "rtname"
+    if "prefix" in k or k in ("address", "destination", "dest", "cidr"):
+        return "prefix"
+    if k in ("name", "routename"):
+        return "name"
+    return "other"
+
+
 def find_header(sh):
     for rn, cells in sh.rows[:15]:
         roles = {ci: classify_header(c.text) for ci, c in cells.items()}
         vals = set(roles.values())
         if "port" in vals and ("addr" in vals or "name" in vals):
-            sh.header_row = rn
-            sh.headers = {ci: c.text.strip() for ci, c in cells.items()}
-            sh.roles = roles
-            return
+            sh.mode = "nsg"
+        else:
+            roles = {ci: classify_rt_header(c.text) for ci, c in cells.items()}
+            vals = set(roles.values())
+            if "nexthoptype" not in vals:
+                continue
+            sh.mode = "rt"
+        sh.header_row = rn
+        sh.headers = {ci: c.text.strip() for ci, c in cells.items()}
+        sh.roles = roles
+        return
     raise CheckerError(
-        "Couldn't find the header row. Expected columns such as name, port, source, dest "
-        "within the first 15 rows.")
+        "Couldn't find the header row in the first 15 rows.\n\n"
+        "NSG sheets need columns such as name, port, source, dest.\n"
+        "Route table sheets need a next hop type column.")
 
 
 def load(path, sheet_name=None):
@@ -649,22 +681,67 @@ def check_priority_cell(cell, acc):
     return t
 
 
+def check_next_hop_type(cell, acc):
+    t = clean_ws(cell.text, acc)
+    if t == "":
+        acc.add("Next hop type is empty", MANUAL)
+        return t
+    canon = NEXT_HOP_TYPES.get(re.sub(r"[^a-z]", "", t.lower()))
+    if canon is None:
+        acc.add("'%s' is not a valid next hop type (%s)" % (
+            t, ", ".join(NEXT_HOP_TYPES.values())), MANUAL)
+        return t
+    if canon != t:
+        acc.add("%s should be %s" % (t, canon), AUTO)
+    return canon
+
+
+def check_next_hop_ip(cell, acc, hop_type):
+    t = clean_ws(cell.text, acc)
+    if hop_type == "VirtualAppliance":
+        if t == "":
+            acc.add("VirtualAppliance needs a next hop IP", MANUAL)
+            return t
+        try:
+            ipaddress.ip_address(t)
+        except ValueError:
+            acc.add("Not a valid next hop IP: '%s' (one IP, no /mask)" % t, MANUAL)
+    elif t and hop_type in NEXT_HOP_TYPES.values():
+        acc.add("Next hop IP is only allowed with VirtualAppliance, not %s" % hop_type, MANUAL)
+    return t
+
+
+def check_name(cell, acc, what):
+    t = clean_ws(cell.text, acc)
+    if t == "":
+        acc.add("%s is empty" % what, MANUAL)
+    elif not re.fullmatch(NAME_RE, t):
+        acc.add("Azure names allow letters, numbers, . - _ only, must start with a letter "
+                "or number and end with a letter, number or _ (max 80)", MANUAL)
+    return t
+
+
 def check_sheet(sh):
     findings = []
     data = [(rn, cells) for rn, cells in sh.rows if rn > sh.header_row]
     role_cols = {ci: r for ci, r in sh.roles.items() if sh.headers.get(ci)}
-    name_col = next((ci for ci, r in role_cols.items() if r == "name"), None)
-    nsg_col = next((ci for ci, r in role_cols.items() if r == "nsg"), None)
-    dir_col = next((ci for ci, r in role_cols.items() if r == "direction"), None)
-    pri_col = next((ci for ci, r in role_cols.items() if r == "priority"), None)
 
-    # ports already written correctly in this file help guess merged ones
+    def col_of(role):
+        return next((ci for ci, r in role_cols.items() if r == role), None)
+
+    name_col = col_of("name")
+    group_col = col_of("nsg") if sh.mode == "nsg" else col_of("rtname")
+    dir_col, pri_col = col_of("direction"), col_of("priority")
+    hop_col, prefix_col = col_of("nexthoptype"), col_of("prefix")
+    # next hop type is checked first so the next hop IP check can use it
+    order = sorted(role_cols, key=lambda ci: (role_cols[ci] != "nexthoptype", ci))
+
     known = set(COMMON_PORTS)
     for rn, cells in data:
         for ci, r in role_cols.items():
             c = cells.get(ci)
             if r == "port" and c is not None and not c.thousands:
-                for p in re.split(r"[;]", c.text.strip()):
+                for p in c.text.strip().split(";"):
                     if re.fullmatch(r"\d{1,5}", p) and 0 < int(p) <= 65535:
                         known.add(int(p))
 
@@ -678,8 +755,10 @@ def check_sheet(sh):
                    for ci in role_cols if role_cols[ci] != "other"):
             continue
         used_rows.append(rn)
-        rule = cells[name_col].text.strip() if name_col is not None and name_col in cells else ""
-        for ci, role in role_cols.items():
+        rule = cells[name_col].text.strip() if name_col in cells else ""
+        group = cells[group_col].text.strip() if group_col in cells else ""
+        for ci in order:
+            role = role_cols[ci]
             cell = cells.get(ci)
             if cell is None:
                 cell = Cell("", ref=col_letter(ci) + str(rn))
@@ -699,13 +778,17 @@ def check_sheet(sh):
             elif role == "priority":
                 fixed = check_priority_cell(cell, acc)
             elif role == "name":
-                fixed = clean_ws(cell.text, acc)
-                if fixed == "":
-                    acc.add("Rule name is empty", MANUAL)
-                elif not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,78}[A-Za-z0-9_])?", fixed):
-                    acc.add("Azure rule names allow letters, numbers, . - _ only, "
-                            "must start with a letter or number and end with a letter, "
-                            "number or _ (max 80)", MANUAL)
+                fixed = check_name(cell, acc, "Route name" if sh.mode == "rt" else "Rule name")
+            elif role == "rtname":
+                fixed = check_name(cell, acc, "Route table name")
+            elif role == "nexthoptype":
+                fixed = check_next_hop_type(cell, acc)
+            elif role == "nexthopip":
+                fixed = check_next_hop_ip(cell, acc, clean_vals.get((rn, hop_col), ""))
+            elif role == "prefix":
+                fixed = check_addr_cell(cell, acc)
+                if ";" in fixed:
+                    acc.add("A route takes one address prefix, this has several", MANUAL)
             else:
                 fixed = clean_ws(cell.text, acc) if cell.text and not cell.is_number else cell.text
             clean_vals[(rn, ci)] = fixed
@@ -715,50 +798,43 @@ def check_sheet(sh):
                     display_cur = "{:,} (number {})".format(int(cell.text), cell.text)
                 elif cell.is_number:
                     display_cur = cell.text + " (number)"
-                findings.append(Finding(
-                    rn, ci, label(ci), rule or cells.get(name_col, Cell("")).text.strip(),
-                    acc.issues, display_cur, fixed, acc.status,
-                    ref=cell.ref or (col_letter(ci) + str(rn))))
-                findings[-1].raw = cell.text
+                f = Finding(rn, ci, label(ci), rule, acc.issues, display_cur, fixed, acc.status,
+                            ref=cell.ref or (col_letter(ci) + str(rn)))
+                f.raw = cell.text
+                f.group = group
+                findings.append(f)
 
-    # duplicates within the same NSG
     def key_of(rn, ci):
         return (clean_vals.get((rn, ci), "") or "").lower() if ci is not None else ""
 
-    if pri_col is not None:
+    def dup_check(col, key_cols, text):
+        if col is None:
+            return
         groups = {}
         for rn in used_rows:
-            pr = key_of(rn, pri_col)
-            if pr:
-                groups.setdefault((key_of(rn, nsg_col), key_of(rn, dir_col), pr), []).append(rn)
-        for (nsg, d, pr), rns in groups.items():
-            if len(rns) > 1:
-                for rn in rns:
-                    others = ", ".join(str(x) for x in rns if x != rn)
-                    f = Finding(rn, pri_col, label(pri_col), key_of(rn, name_col) and
-                                clean_vals.get((rn, name_col), ""),
-                                ["Priority %s also used by row %s (same NSG, %s)" % (
-                                    pr, others, d or "same direction")],
-                                clean_vals.get((rn, pri_col), ""), "", MANUAL,
-                                ref=col_letter(pri_col) + str(rn), row_level=True)
-                    f.raw = f.current
-                    findings.append(f)
-    if name_col is not None:
-        groups = {}
-        for rn in used_rows:
-            nm = key_of(rn, name_col)
-            if nm:
-                groups.setdefault((key_of(rn, nsg_col), nm), []).append(rn)
-        for (nsg, nm), rns in groups.items():
-            if len(rns) > 1:
-                for rn in rns:
-                    others = ", ".join(str(x) for x in rns if x != rn)
-                    f = Finding(rn, name_col, label(name_col), clean_vals.get((rn, name_col), ""),
-                                ["Rule name also used by row %s (same NSG)" % others],
-                                clean_vals.get((rn, name_col), ""), "", MANUAL,
-                                ref=col_letter(name_col) + str(rn), row_level=True)
-                    f.raw = f.current
-                    findings.append(f)
+            v = key_of(rn, col)
+            if v:
+                groups.setdefault(tuple(key_of(rn, k) for k in key_cols) + (v,), []).append(rn)
+        for key, rns in groups.items():
+            if len(rns) < 2:
+                continue
+            for rn in rns:
+                others = ", ".join(str(x) for x in rns if x != rn)
+                f = Finding(rn, col, label(col), clean_vals.get((rn, name_col), ""),
+                            [text(key, others)], clean_vals.get((rn, col), ""), "", MANUAL,
+                            ref=col_letter(col) + str(rn), row_level=True)
+                f.raw = f.current
+                f.group = clean_vals.get((rn, group_col), "")
+                findings.append(f)
+
+    if sh.mode == "nsg":
+        dup_check(pri_col, [group_col, dir_col], lambda k, o: "Priority %s also used by row %s (same NSG, %s)"
+                  % (k[-1], o, k[1] or "same direction"))
+        dup_check(name_col, [group_col], lambda k, o: "Rule name also used by row %s (same NSG)" % o)
+    else:
+        dup_check(name_col, [group_col], lambda k, o: "Route name also used by row %s (same route table)" % o)
+        dup_check(prefix_col, [group_col], lambda k, o: "Address prefix %s also used by row %s (same route table)"
+                  % (k[-1], o))
 
     findings.sort(key=lambda f: (f.rownum, f.colidx, f.row_level))
     return findings, len(used_rows)
@@ -965,9 +1041,9 @@ def gui_main():
     panes.pack(fill="both", expand=True)
 
     tframe = ttk.Frame(panes)
-    cols = ("n", "row", "col", "rule", "issue", "current", "fixed", "fix")
-    heads = ("#", "Row", "Column", "Rule name", "Issue", "Current value", "Fixed value", "Fix")
-    widths = (36, 44, 100, 220, 330, 170, 160, 64)
+    cols = ("n", "row", "col", "rule", "group", "issue", "current", "fixed", "fix")
+    heads = ["#", "Row", "Column", "Rule name", "NSG", "Issue", "Current value", "Fixed value", "Fix"]
+    widths = (36, 44, 100, 190, 270, 250, 130, 130, 60)
     tree = ttk.Treeview(tframe, columns=cols, show="headings", selectmode="extended")
     for c, h, w in zip(cols, heads, widths):
         tree.heading(c, text=h)
@@ -1008,7 +1084,7 @@ def gui_main():
     status.pack(fill="x", pady=(6, 0))
 
     def row_values(i, f):
-        return (i + 1, f.rownum, f.col_label, f.rule, f.issue_text, visible(f.current),
+        return (i + 1, f.rownum, f.col_label, f.rule, f.group, f.issue_text, visible(f.current),
                 visible(f.fixed) if f.status not in (MANUAL, NOTE, SKIPPED) or f.fixed != f.raw
                 else "", f.status)
 
@@ -1035,7 +1111,7 @@ def gui_main():
         details.delete("1.0", "end")
         if sel:
             f = state["findings"][int(sel[0])]
-            details.insert("end", "Row %s, %s   [%s]\n" % (f.rownum, f.col_label, f.status))
+            details.insert("end", "Row %s, %s   [%s]   %s: %s\n" % (f.rownum, f.col_label, f.status, heads[4], f.group))
             for s in f.issues:
                 details.insert("end", "  • " + s + "\n")
             details.insert("end", "Current: %s\n" % visible(f.current))
@@ -1061,16 +1137,20 @@ def gui_main():
             messagebox.showerror("NSG Rule Checker", "Couldn't read the file:\n%s" % e)
             return
         state.update(sheet=sh, findings=findings, rules=nrules)
+        heads[3], heads[4] = (("Route name", "Route table") if sh.mode == "rt" else ("Rule name", "NSG"))
+        tree.heading("rule", text=heads[3])
+        tree.heading("group", text=heads[4])
         settings.update(last_file=path, last_sheet=sheet_var.get())
         save_settings(settings)
         populate()
         found = [sh.headers[ci] for ci in sorted(sh.roles) if sh.roles[ci] != "other"]
+        what = "%d %s" % (nrules, "routes (route table sheet)" if sh.mode == "rt" else "rules (NSG sheet)")
         if not findings:
-            status_var.set("Checked %d rules: no problems found. Columns checked: %s"
-                           % (nrules, ", ".join(found)))
+            status_var.set("Checked %s: no problems found. Columns checked: %s"
+                           % (what, ", ".join(found)))
         else:
-            status_var.set("Checked %d rules, %d cells need attention. Columns checked: %s"
-                           % (nrules, len(findings), ", ".join(found)))
+            status_var.set("Checked %s, %d cells need attention. Columns checked: %s"
+                           % (what, len(findings), ", ".join(found)))
 
     def do_save():
         sh = state["sheet"]
