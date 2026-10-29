@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NSG Rule Checker v1.1.0
+NSG Rule Checker v1.1.1
 
 Checks an NSG rules sheet or a route table sheet (.xlsx tracker or the
 Terraform .csv) for the mistakes that break a Terraform deploy, and saves
@@ -33,7 +33,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".nsg_rule_checker_gui.json")
 
 # ---------- reference data ----------
@@ -550,8 +550,6 @@ def check_port_cell(cell, acc, known):
         n = int(t)
         if cell.thousands or n > 65535:
             return merged_port_issue(t, "{:,}".format(n), acc, known) or t
-        if n < 1:
-            acc.add("Port %s is out of range (1-65535)" % t, MANUAL)
         return t
     t = clean_ws(cell.text, acc)
     if t == "":
@@ -582,8 +580,8 @@ def check_port_cell(cell, acc, known):
         norm = str(a) if b is None else "%d-%d" % (a, b)
         if norm != p:
             acc.add("Leading zero in port %s" % p, AUTO)
-        if not 1 <= a <= 65535 or (b is not None and not 1 <= b <= 65535):
-            acc.add("Port %s is out of range (1-65535)" % p, MANUAL)
+        if a > 65535 or (b is not None and b > 65535):
+            acc.add("Port %s is out of range (0-65535)" % p, MANUAL)
         elif b is not None and a > b:
             acc.add("Port range %s starts higher than it ends" % p, MANUAL)
         out.append(norm)
@@ -607,6 +605,10 @@ def check_addr_cell(cell, acc):
         if p == "*":
             out.append(p)
             kinds.append("any")
+            continue
+        if re.fullmatch(r"(?i)asg[A-Za-z0-9._-]*", p):
+            out.append(p)  # application security group
+            kinds.append("asg")
             continue
         if re.fullmatch(r"[A-Za-z][A-Za-z0-9._-]*", p):
             base = p.split(".")[0]
@@ -643,6 +645,8 @@ def check_addr_cell(cell, acc):
     out = dedupe(out, acc)
     if len(out) > 1 and ("tag" in kinds or "any" in kinds):
         acc.add("A service tag or * can't be mixed with other addresses in one rule", MANUAL)
+    elif "asg" in kinds and any(k != "asg" for k in kinds):
+        acc.add("An application security group can't be mixed with IPs in one rule", MANUAL)
     return ";".join(out)
 
 
