@@ -25,7 +25,7 @@ NSG rules for the GCC NP Terraform infra are added through a CSV. Small human er
 - `,` or spaces used instead of `;` in ports and addresses, empty entries (`;;`, trailing `;`), duplicates
 - Ports Excel joined into one number, e.g. `804,438,443` is split back into `80;443;8443` using a list of common ports plus the ports already used in the file
 - Numbers shown with a thousands comma (`1,433`), which a CSV export would write with the comma
-- Invalid IPs or CIDRs, CIDRs with host bits set, service tag spelling, a service tag mixed with IPs
+- Invalid IPs or CIDRs, CIDRs with host bits set, service tag spelling, a service tag or ASG mixed with IPs
 - Direction, access and protocol spelling (`TCP` to `Tcp`), priority range 100 to 4096
 - Duplicate priority (same NSG and direction) and duplicate rule names (same NSG)
 - NSG column in the results, double-click to copy it for the Azure portal
@@ -107,6 +107,7 @@ Double-click a cell to copy it. **Copy results** copies the whole table for a ti
 ## Changelog
 See [Releases](../../releases).
 
+- **v1.1.1**: port range `0-65535` no longer flagged; application security groups (names starting with ASG) are no longer flagged as unknown service tags
 - **v1.1.0**: NSG / Route table column in the results, route table sheet checks (next hop type, next hop IP, prefixes, spaces)
 - **v1.0.0**: first release
 
