@@ -4,7 +4,7 @@
 ![Terraform](https://img.shields.io/badge/Terraform-7B42BC?style=flat&logo=terraform&logoColor=white)
 
 ## Overview
-This tool checks an NSG rules sheet (the tracker `.xlsx` or the Terraform `nsg_rules` `.csv`) for typing and Excel mistakes that break a Terraform deploy, then saves a fixed copy.
+This tool checks an NSG rules sheet or a route table sheet (the tracker `.xlsx` or the Terraform `.csv`) for typing and Excel mistakes that break a Terraform deploy, then saves a fixed copy.
 
 ---
 
@@ -28,6 +28,9 @@ NSG rules for the GCC NP Terraform infra are added through a CSV. Small human er
 - Invalid IPs or CIDRs, CIDRs with host bits set, service tag spelling, a service tag mixed with IPs
 - Direction, access and protocol spelling (`TCP` to `Tcp`), priority range 100 to 4096
 - Duplicate priority (same NSG and direction) and duplicate rule names (same NSG)
+- NSG column in the results, double-click to copy it for the Azure portal
+- Route table sheets: next hop type must be exactly `VirtualAppliance`, `VirtualNetworkGateway`, `VnetLocal`, `Internet` or `None` (`Virtual Appliance` is fixed to `VirtualAppliance`)
+- Route table sheets: next hop IP required for VirtualAppliance and not allowed for other types, valid address prefix, duplicate route names or prefixes in the same route table, stray spaces in every column
 - Saves `<name>_fixed.xlsx` or `<name>_fixed.csv`, keeps the original untouched, then re-reads the saved file to confirm every fix landed
 - CSV output only changes the rows that were fixed and keeps the line endings, so the git diff stays small
 
@@ -71,7 +74,7 @@ Documents/
 python3 nsg_rule_checker_gui.py
 ```
 
-1. Click **Browse…** and pick the `.xlsx` or `.csv`. For `.xlsx`, choose the sheet (defaults to `nsg`).
+1. Click **Browse…** and pick the `.xlsx` or `.csv`. For `.xlsx`, choose the sheet (defaults to `nsg`, pick `rt` for route tables). The tool works out from the headers whether it is an NSG or a route table sheet.
 2. Click **Check** (or press F5). Each problem cell is listed with the current and fixed value.
 3. Review the rows:
 
@@ -104,6 +107,7 @@ Double-click a cell to copy it. **Copy results** copies the whole table for a ti
 ## Changelog
 See [Releases](../../releases).
 
+- **v1.1.0**: NSG / Route table column in the results, route table sheet checks (next hop type, next hop IP, prefixes, spaces)
 - **v1.0.0**: first release
 
 ---
