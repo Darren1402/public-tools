@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NSG Resource Group Lookup (GUI) v1.1.1
+NSG Resource Group Lookup (GUI) v1.2.0
 
 Takes a list of NSG names (from the NSG IP Removal report, or any CSV / Excel with an
 NSG column) and finds, for each NSG:
@@ -17,6 +17,7 @@ Needs: Python 3 with tkinter, Azure CLI logged in (az login), Reader access.
 Standard library only.
 """
 import csv
+import fnmatch
 import io
 import json
 import os
@@ -28,7 +29,7 @@ import threading
 import xml.etree.ElementTree as ET
 import zipfile
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 DOCS = os.path.join(os.path.expanduser("~"), "Documents")
 SETTINGS = os.path.join(os.path.expanduser("~"), ".nsg_rg_lookup.json")
 NSG_COLUMNS = ("nsg", "networksecuritygroupname", "networksecuritygroup", "nsg_name", "nsgname")
@@ -266,6 +267,116 @@ def locks_for(nsg, sub_locks):
     return hits
 
 
+# ---------- your access ----------
+ACTIONS = {
+    "write": "Microsoft.Network/networkSecurityGroups/securityRules/write",    # edit a rule (remove IPs)
+    "delete": "Microsoft.Network/networkSecurityGroups/securityRules/delete",  # delete a rule
+}
+NEED_TEXT = {"write": "edit rules", "delete": "delete rules"}
+
+
+def whoami():
+    try:
+        acc = az(["account", "show"]) or {}
+        return (acc.get("user") or {}).get("name", "")
+    except AzError:
+        return ""
+
+
+def get_permissions(resource_id):
+    """Azure's effective-permissions check for the signed-in user on one resource.
+    Includes roles from groups, custom roles, and roles inherited from subscription / resource group."""
+    url = (f"https://management.azure.com{resource_id}"
+           "/providers/Microsoft.Authorization/permissions?api-version=2022-04-01")
+    return (az(["rest", "--method", "get", "--url", url]) or {}).get("value", [])
+
+
+def _match(pattern, action):
+    return fnmatch.fnmatchcase(action.lower(), pattern.lower())
+
+
+def allowed(perms, action):
+    """True if any role grants the action and that same role does not exclude it."""
+    for p in perms:
+        if any(_match(a, action) for a in p.get("actions", [])) and \
+                not any(_match(n, action) for n in p.get("notActions", [])):
+            return True
+    return False
+
+
+def check_access(resource_ids, progress=lambda msg: None):
+    """resource id -> ({"write": bool, "delete": bool} or None, error or None)"""
+    out = {}
+    for n, rid in enumerate(resource_ids, 1):
+        progress(f"Checking your access on NSG {n} of {len(resource_ids)}...")
+        try:
+            perms = get_permissions(rid)
+            out[rid] = ({k: allowed(perms, a) for k, a in ACTIONS.items()}, None)
+        except AzError as e:
+            out[rid] = (None, str(e).splitlines()[0][:200])
+    return out
+
+
+def needs(r):
+    """What this NSG's changes need: delete for deleted rules, write for updated rules.
+    A plain NSG list (no status column) is checked for both."""
+    need = set()
+    if r.get("deleted"):
+        need.add("delete")
+    if r.get("updated"):
+        need.add("write")
+    if not need and not r.get("not_found"):
+        need = {"write", "delete"}
+    return need
+
+
+def access_ok(r):
+    """True / False, or None when access could not be checked (or NSG not found)."""
+    if r.get("access") is None:
+        return None
+    return all(r["access"][n] for n in needs(r))
+
+
+def describe_access(r):
+    if r.get("access_error"):
+        return f"Could not check: {r['access_error']}"
+    a = r.get("access")
+    if a is None:
+        return ""
+    if a["write"] and a["delete"]:
+        return "Edit + delete rules"
+    if a["write"]:
+        return "Edit rules only"
+    if a["delete"]:
+        return "Delete rules only"
+    return "No change access"
+
+
+def missing_text(r):
+    a = r.get("access") or {}
+    return ", ".join(NEED_TEXT[n] for n in sorted(needs(r)) if not a.get(n))
+
+
+def access_summary(results, user=""):
+    """Text to request access: each NSG where the signed-in user is missing what the change needs."""
+    groups = {}
+    for r in results:
+        if access_ok(r) is False:
+            groups.setdefault((r["subscription"], r["resourceGroup"]), []).append(r)
+    if not groups:
+        return "You have the access needed for every NSG that was found."
+    who = f" ({user})" if user else ""
+    lines = [f"Access needed for the NSG rule changes{who}.",
+             "Network Contributor on these resource groups (or the NSGs) would cover it:", ""]
+    for (sub, rg), rows in sorted(groups.items()):
+        lines.append(f"Subscription:   {sub}")
+        lines.append(f"Resource group: {rg}")
+        for r in sorted(rows, key=lambda x: x["nsg"].lower()):
+            lines.append(f"  NSG: {r['nsg']}  (missing: {missing_text(r)})")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
 def lookup(nsg_items, progress=lambda msg: None):
     """Full lookup. Returns result rows (dicts), one per NSG found (or one NOT_FOUND row)."""
     names = [i["nsg"] for i in nsg_items]
@@ -273,12 +384,16 @@ def lookup(nsg_items, progress=lambda msg: None):
     subs = sorted({r["subscriptionId"] for rs in found.values() for r in rs})
     locks = get_locks(subs, progress)
 
+    ids = sorted({r["id"] for rs in found.values() for r in rs})
+    access = check_access(ids, progress)
+
     results = []
     for item in nsg_items:
         matches = found.get(item["nsg"].lower(), [])
         if not matches:
             results.append({**item, "status": "NOT_FOUND", "subscription": "", "subscriptionId": "",
-                            "resourceGroup": "", "locks": [], "lock_error": None})
+                            "resourceGroup": "", "locks": [], "lock_error": None,
+                            "access": None, "access_error": None})
             continue
         dup_note = ""
         if len(matches) > 1:
@@ -298,7 +413,9 @@ def lookup(nsg_items, progress=lambda msg: None):
                 status = "NO_LOCK"
             results.append({**item, "status": status, "subscription": m.get("subscription") or m["subscriptionId"],
                             "subscriptionId": m["subscriptionId"], "resourceGroup": m["resourceGroup"],
-                            "locks": hits, "lock_error": err, "multiple": len(matches) > 1, "dup_note": dup_note})
+                            "locks": hits, "lock_error": err, "multiple": len(matches) > 1, "dup_note": dup_note,
+                            "access": access.get(m["id"], (None, None))[0],
+                            "access_error": access.get(m["id"], (None, None))[1]})
     return results
 
 
@@ -422,6 +539,8 @@ def gui_main():
     run_btn.pack(side="left")
     unlock_btn = ttk.Button(btns, text="Copy unlock list", state="disabled")
     unlock_btn.pack(side="left", padx=8)
+    access_btn = ttk.Button(btns, text="Copy access gaps", state="disabled")
+    access_btn.pack(side="left", padx=(0, 8))
     copy_btn = ttk.Button(btns, text="Copy results", state="disabled")
     copy_btn.pack(side="left")
     export_btn = ttk.Button(btns, text="Export CSV", state="disabled")
@@ -429,18 +548,26 @@ def gui_main():
     copied_var = tk.StringVar(value="")
     ttk.Label(btns, textvariable=copied_var, foreground="#1a7f37").pack(side="left", padx=4)
 
-    ttk.Label(root, textvariable=status_var, padding=(12, 4)).pack(fill="x")
+    status_lbl = ttk.Label(root, textvariable=status_var, padding=(12, 4))
+    status_lbl.pack(fill="x")
     mod = "Command" if sys.platform == "darwin" else "Control"
     copy_key = "Cmd+C" if sys.platform == "darwin" else "Ctrl+C"
-    ttk.Label(root, foreground="#666666", padding=(12, 0, 12, 4),
-              text=("Red = lock blocks the change, amber = check, green = no lock.   Click Resource group to group by colour.   "
-                    f"Double-click to copy a cell, right-click for more, {copy_key} copies selected rows.")
-              ).pack(fill="x")
+    hint_lbl = ttk.Label(root, foreground="#666666", padding=(12, 0, 12, 4),
+                         text=("Red = a lock or missing access blocks the change, amber = check, green = good to go.   "
+                               "Click Resource group to group by colour.   "
+                               f"Double-click to copy a cell, right-click for more, {copy_key} copies selected rows."))
+    hint_lbl.pack(fill="x")
 
-    cols = ("nsg", "sub", "rg", "status", "locks", "deleted", "updated", "blocks", "from")
+    def rewrap(event):  # wrap long status / hint text instead of cutting it off
+        if event.widget is root:
+            for lbl in (status_lbl, hint_lbl):
+                lbl.configure(wraplength=max(300, event.width - 30))
+    root.bind("<Configure>", rewrap, add="+")
+
+    cols = ("nsg", "sub", "rg", "status", "locks", "deleted", "updated", "blocks", "access", "access_ok", "from")
     heads = ("NSG", "Subscription", "Resource group", "Lock status", "Locks", "Rules deleted", "Rules updated",
-             "Blocks change?", "From report(s)")
-    widths = (330, 200, 260, 140, 380, 95, 95, 110, 260)
+             "Lock blocks?", "Your access", "Access OK?", "From report(s)")
+    widths = (330, 200, 260, 140, 380, 95, 95, 100, 160, 100, 260)
     frame = ttk.Frame(root, padding=(12, 0, 12, 12))
     frame.pack(fill="both", expand=True)
     tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="extended")
@@ -523,6 +650,9 @@ def gui_main():
     def copy_unlock():
         to_clipboard(unlock_summary(state["results"]), "unlock list, ready to send")
 
+    def copy_access():
+        to_clipboard(access_summary(state["results"], state.get("user", "")), "access gaps, ready to send")
+
     def on_double(event):
         if tree.identify_region(event.x, event.y) != "cell":
             return
@@ -547,6 +677,7 @@ def gui_main():
         menu.add_separator()
         menu.add_command(label="Copy all results", command=copy_all)
         menu.add_command(label="Copy unlock list", command=copy_unlock)
+        menu.add_command(label="Copy access gaps", command=copy_access)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -562,6 +693,7 @@ def gui_main():
     tree.bind(f"<{mod}-a>", lambda e: (tree.selection_set(tree.get_children()), "break")[1])
     copy_btn.configure(command=copy_all)
     unlock_btn.configure(command=copy_unlock)
+    access_btn.configure(command=copy_access)
 
     def export_csv():
         p = filedialog.asksaveasfilename(title="Export results", defaultextension=".csv",
@@ -594,9 +726,9 @@ def gui_main():
             tree.column(c, width=min(width, 520))
 
     def colour(r):
-        if r["status"] in ("NOT_FOUND", "LOCKS_UNKNOWN") or r.get("multiple"):
+        if r["status"] in ("NOT_FOUND", "LOCKS_UNKNOWN") or r.get("multiple") or r.get("access_error"):
             return "warn"
-        if blocks_change(r):
+        if blocks_change(r) or access_ok(r) is False:
             return "bad"
         if r["status"] in ("DELETE_LOCK", "READ_ONLY_LOCK"):
             return "warn"
@@ -613,7 +745,9 @@ def gui_main():
             status = STATUS_TEXT[r["status"]] + (f" ({r['dup_note']})" if r.get("dup_note") else "")
             tree.insert("", "end", tags=(tag,), values=(
                 r["nsg"], r["subscription"], r["resourceGroup"], status, describe_locks(r),
-                r["deleted"], r["updated"], "Yes" if blocks else "No", ", ".join(r.get("sources", []))))
+                r["deleted"], r["updated"], "Yes" if blocks else "No", describe_access(r),
+                {True: "Yes", False: f"No, missing {missing_text(r)}", None: ""}[access_ok(r)],
+                ", ".join(r.get("sources", []))))
 
         autofit()
 
@@ -627,11 +761,15 @@ def gui_main():
             msg += f"  {nf} NSG(s) not found."
         if unk:
             msg += f"  Locks could not be read for {unk}."
+        no_access = sum(1 for r in results if access_ok(r) is False)
+        msg += f"  You are missing access on {no_access} NSG(s)." if no_access else "  You have the access needed."
+        if state.get("user"):
+            msg += f"  (Checked as {state['user']})"
         dups = len({r["nsg"].lower() for r in results if r.get("multiple")})
         if dups:
             msg += f"  {dups} duplicate NSG name(s), see amber rows."
         status_var.set(msg)
-        for b in (copy_btn, export_btn, unlock_btn):
+        for b in (copy_btn, export_btn, unlock_btn, access_btn):
             b.configure(state="normal" if results else "disabled")
         tree.focus_set()
 
@@ -674,6 +812,7 @@ def gui_main():
 
         def work():
             try:
+                state["user"] = whoami()
                 res = lookup(items, progress)
                 root.after(0, lambda: finish(res))
             except AzError as e:
