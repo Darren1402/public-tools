@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NSG Resource Group Lookup (GUI) v1.1.0
+NSG Resource Group Lookup (GUI) v1.1.1
 
 Takes a list of NSG names (from the NSG IP Removal report, or any CSV / Excel with an
 NSG column) and finds, for each NSG:
@@ -28,7 +28,7 @@ import threading
 import xml.etree.ElementTree as ET
 import zipfile
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 DOCS = os.path.join(os.path.expanduser("~"), "Documents")
 SETTINGS = os.path.join(os.path.expanduser("~"), ".nsg_rg_lookup.json")
 NSG_COLUMNS = ("nsg", "networksecuritygroupname", "networksecuritygroup", "nsg_name", "nsgname")
@@ -280,6 +280,11 @@ def lookup(nsg_items, progress=lambda msg: None):
             results.append({**item, "status": "NOT_FOUND", "subscription": "", "subscriptionId": "",
                             "resourceGroup": "", "locks": [], "lock_error": None})
             continue
+        dup_note = ""
+        if len(matches) > 1:
+            n_subs = len({m["subscriptionId"] for m in matches})
+            dup_note = (f"same name in {len(matches)} RGs" if n_subs == 1 else
+                        f"same name in {len(matches)} RGs, {n_subs} subscriptions")
         for m in matches:
             sub_locks, err = locks.get(m["subscriptionId"], ([], None))
             hits = locks_for(m, sub_locks)
@@ -293,7 +298,7 @@ def lookup(nsg_items, progress=lambda msg: None):
                 status = "NO_LOCK"
             results.append({**item, "status": status, "subscription": m.get("subscription") or m["subscriptionId"],
                             "subscriptionId": m["subscriptionId"], "resourceGroup": m["resourceGroup"],
-                            "locks": hits, "lock_error": err, "multiple": len(matches) > 1})
+                            "locks": hits, "lock_error": err, "multiple": len(matches) > 1, "dup_note": dup_note})
     return results
 
 
@@ -321,6 +326,8 @@ def unlock_summary(results):
         key = (r["subscription"], r["resourceGroup"])
         g = groups.setdefault(key, {"nsgs": [], "locks": {}})
         g["nsgs"].append(r["nsg"])
+        if r.get("multiple"):
+            g.setdefault("dups", []).append(r["nsg"])
         g.setdefault("sources", set()).update(r.get("sources", []))
         for h in r["locks"]:
             g["locks"][(h["name"], h["level"], h["where"])] = 1
@@ -333,6 +340,8 @@ def unlock_summary(results):
         for (name, level, where) in g["locks"]:
             lines.append(f"  Lock: {name} ({level}, on {where})")
         lines.append("  NSGs: " + ", ".join(sorted(set(g["nsgs"]))))
+        for n in sorted(set(g.get("dups", []))):
+            lines.append(f"  Check: {n} has the same name in another resource group. Confirm this is the right one")
         if g.get("sources"):
             lines.append("  From: " + ", ".join(sorted(g["sources"])))
         lines.append("")
@@ -437,7 +446,7 @@ def gui_main():
     tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="extended")
     for c, h, w in zip(cols, heads, widths):
         tree.heading(c, text=h, command=lambda c=c: sort_by(c))
-        tree.column(c, width=w, anchor="w", stretch=(c in ("nsg", "locks")))
+        tree.column(c, width=w, minwidth=40, anchor="w", stretch=False)  # no stretch: dragged widths stay put
     ysb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
     xsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
     tree.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
@@ -570,8 +579,22 @@ def gui_main():
     export_btn.configure(command=export_csv)
 
     # ----- run the lookup in the background so the window stays responsive -----
+    def autofit():
+        """Size each column to its longest value (capped), like nsg-lookup. Drag a divider to change it."""
+        import tkinter.font as tkfont
+        try:
+            body = tkfont.nametofont(ttk.Style().lookup("Treeview", "font") or "TkDefaultFont")
+        except tk.TclError:
+            body = tkfont.nametofont("TkDefaultFont")
+        head = tkfont.nametofont("TkHeadingFont")
+        for i, c in enumerate(cols):
+            width = head.measure(heads[i] + " \u25b2") + 24
+            for it in tree.get_children():
+                width = max(width, body.measure(str(tree.item(it, "values")[i])) + 24)
+            tree.column(c, width=min(width, 520))
+
     def colour(r):
-        if r["status"] in ("NOT_FOUND", "LOCKS_UNKNOWN"):
+        if r["status"] in ("NOT_FOUND", "LOCKS_UNKNOWN") or r.get("multiple"):
             return "warn"
         if blocks_change(r):
             return "bad"
@@ -587,10 +610,12 @@ def gui_main():
         for r in results:
             blocks = blocks_change(r)
             tag = colour(r)
-            status = STATUS_TEXT[r["status"]] + (" (in several subscriptions)" if r.get("multiple") else "")
+            status = STATUS_TEXT[r["status"]] + (f" ({r['dup_note']})" if r.get("dup_note") else "")
             tree.insert("", "end", tags=(tag,), values=(
                 r["nsg"], r["subscription"], r["resourceGroup"], status, describe_locks(r),
                 r["deleted"], r["updated"], "Yes" if blocks else "No", ", ".join(r.get("sources", []))))
+
+        autofit()
 
         locked_rgs = {(r["subscription"], r["resourceGroup"]) for r in results if blocks_change(r)}
         nf = sum(1 for r in results if r["status"] == "NOT_FOUND")
@@ -602,6 +627,9 @@ def gui_main():
             msg += f"  {nf} NSG(s) not found."
         if unk:
             msg += f"  Locks could not be read for {unk}."
+        dups = len({r["nsg"].lower() for r in results if r.get("multiple")})
+        if dups:
+            msg += f"  {dups} duplicate NSG name(s), see amber rows."
         status_var.set(msg)
         for b in (copy_btn, export_btn, unlock_btn):
             b.configure(state="normal" if results else "disabled")
