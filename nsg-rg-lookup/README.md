@@ -35,6 +35,7 @@ It helps:
 | Blocks change? | Works out whether a lock stops the change. A `CanNotDelete` lock blocks deleting rules, a `ReadOnly` lock blocks any change |
 | Copy unlock list | Copies a short summary of each locked resource group, its locks, and the NSGs affected, ready to send |
 | Results table | One row per NSG, colour coded: red = lock blocks the change, amber = check, green = no lock |
+| Columns | Each column is sized to fit its content after a lookup. Drag a divider to make a column wider, it stays where you put it. Use the scrollbar at the bottom when the table is wider than the window |
 | Sort | Click the **Resource group** heading to group red at the top, then amber, then green (resource groups A to Z within each). Click again to flip. Every other heading sorts by that column |
 | Copy a single value | Double-click any cell to copy just that value, or right-click for a menu: copy the cell, the selected rows, the column, all results, or the unlock list |
 | Copy and export | **Copy results** pastes into Excel or a ticket. **Export CSV** saves the table |
@@ -155,7 +156,7 @@ See [Releases](https://github.com/Darren1402/public-tools/releases?q=nsg-rg-look
 | Blocks change? uses the report | "Rules deleted" and "Rules updated" come from the report's status column. With a plain NSG list (no status), any lock is treated as blocking |
 | Locks are inherited | A lock on the subscription or resource group applies to every NSG inside it. The Locks column says where each lock sits, so the right one gets removed |
 | Subscription-level locks | If a lock sits on the subscription, it has to be lifted there, not on the resource group |
-| Same NSG name twice | If an NSG name exists in more than one subscription, each one gets its own row, marked "in several subscriptions" |
+| Same NSG name twice | If two NSGs in Azure share a name (for example in two resource groups), each gets its own amber row marked "same name in 2 RGs". The report only has the name, so check your Terraform code for which resource group is the right one before asking for a lock to be lifted. The unlock list flags these with a "Check:" line |
 | Rename reports | NSG IP Removal always saves `ip_removal_report.csv`, so rename each one (for example by VNet) before the next run, or it gets overwritten |
 | Put locks back | Locks are there for a reason. Ask for them to be put back once the rules are deleted |
 
