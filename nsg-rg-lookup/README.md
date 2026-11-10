@@ -4,7 +4,7 @@
 ![Azure CLI](https://img.shields.io/badge/Azure%20CLI-0078D4?style=flat&logo=microsoftazure&logoColor=white)
 
 ## Overview
-This tool takes a list of NSG names and finds, for each one, the Subscription and Resource Group it lives in, plus any resource locks that apply to it. It uses Azure Resource Graph and the Azure CLI, and makes no changes.
+This tool takes a list of NSG names and finds, for each one, the Subscription and Resource Group it lives in, plus any resource locks that apply to it, and whether **you** have the access to make the change. It uses Azure Resource Graph and the Azure CLI, and makes no changes.
 
 It is a desktop window (GUI): pick one or more NSG IP Removal reports (or any CSV or Excel files with an NSG column), click **Look up**, and get a results table and a ready-to-send list of locked resource groups.
 
@@ -22,6 +22,7 @@ It helps:
 - See which locks apply (on the subscription, the resource group, or the NSG itself) and their level
 - See which locks actually block the change, so only those get lifted
 - Hand a senior engineer a clean, copy-ready list of resource groups to unlock
+- Check you have the access to edit and delete the rules before you start, and copy a ready-to-send access request if not
 
 ---
 
@@ -33,15 +34,18 @@ It helps:
 | Resource group lookup | Finds each NSG's Subscription and Resource Group through Azure Resource Graph, across every subscription you have Reader access to |
 | Lock check | Lists every lock that applies to the NSG, and where it sits: Subscription, Resource group, or NSG |
 | Blocks change? | Works out whether a lock stops the change. A `CanNotDelete` lock blocks deleting rules, a `ReadOnly` lock blocks any change |
+| Your access | Asks Azure what the signed-in user can do on each NSG (effective permissions), so roles from groups, custom roles, and roles inherited from the subscription or resource group all count. Checks **edit rules** (`securityRules/write`) and **delete rules** (`securityRules/delete`) |
+| Access OK? | Compares your access with what the report needs: delete for deleted rules, edit for updated rules. Shows what is missing |
+| Copy access gaps | Copies a short, ready-to-send list of the NSGs where you are missing access, grouped by resource group |
 | Copy unlock list | Copies a short summary of each locked resource group, its locks, and the NSGs affected, ready to send |
-| Results table | One row per NSG, colour coded: red = lock blocks the change, amber = check, green = no lock |
+| Results table | One row per NSG, colour coded: red = a lock or missing access blocks the change, amber = check, green = good to go |
 | Columns | Each column is sized to fit its content after a lookup. Drag a divider to make a column wider, it stays where you put it. Use the scrollbar at the bottom when the table is wider than the window |
 | Sort | Click the **Resource group** heading to group red at the top, then amber, then green (resource groups A to Z within each). Click again to flip. Every other heading sorts by that column |
 | Copy a single value | Double-click any cell to copy just that value, or right-click for a menu: copy the cell, the selected rows, the column, all results, or the unlock list |
 | Copy and export | **Copy results** pastes into Excel or a ticket. **Export CSV** saves the table |
 | Large lists | Looks up NSGs in batches and pages past the Resource Graph 1,000-row limit |
 | Remembers the files | The last set of reports is filled in next time |
-| Read-only | Only runs `az graph query` and `az lock list`. Nothing in Azure is changed |
+| Read-only | Only runs `az graph query`, `az lock list`, `az account show`, and a read of the permissions API (`az rest --method get`). Nothing in Azure is changed |
 | No pip installs | Standard library only, including reading Excel files |
 
 ---
@@ -111,8 +115,9 @@ python nsg_rg_lookup_gui.py
 1. Run `az login` first if you have not already.
 2. Click **Browse** and pick your reports. Hold Cmd (Mac) or Ctrl (Windows) and click to pick several, or click the first and Shift+click the last to pick a range.
 3. Click **Look up**. The status line shows progress, then a summary.
-4. Check the table. Red rows have a lock that blocks the change. Click the **Resource group** heading to bring all the red rows to the top.
+4. Check the table. Red rows have a lock or missing access that blocks the change. Click the **Resource group** heading to bring all the red rows to the top.
 5. Click **Copy unlock list** and send it to whoever can remove the locks.
+6. Check the **Access OK?** column. If any say No, click **Copy access gaps** and send it to whoever grants access.
 
 Example of what **Copy unlock list** gives you:
 ```
@@ -152,7 +157,10 @@ See [Releases](https://github.com/Darren1402/public-tools/releases?q=nsg-rg-look
 ## Notes
 | Note | Detail |
 |---|---|
-| Read-only | Every Azure call this tool makes is a read: `az graph query` and `az lock list` |
+| Read-only | Every Azure call this tool makes is a read: `az graph query`, `az lock list`, `az account show`, and a GET on the permissions API |
+| PIM roles | If your Network Contributor (or similar) role comes through PIM, activate it first. An eligible role that is not activated does not count, so the tool will show access as missing |
+| Access is checked as you | The access columns are for whoever is signed in to the Azure CLI (shown on the status line). Run `az account show` to check |
+| Deny assignments | The access check covers role assignments. A rare deny assignment can still block a change the tool shows as allowed |
 | Blocks change? uses the report | "Rules deleted" and "Rules updated" come from the report's status column. With a plain NSG list (no status), any lock is treated as blocking |
 | Locks are inherited | A lock on the subscription or resource group applies to every NSG inside it. The Locks column says where each lock sits, so the right one gets removed |
 | Subscription-level locks | If a lock sits on the subscription, it has to be lifted there, not on the resource group |
