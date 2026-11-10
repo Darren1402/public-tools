@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NSG Resource Group Lookup (GUI) v1.0.0
+NSG Resource Group Lookup (GUI) v1.1.0
 
 Takes a list of NSG names (from the NSG IP Removal report, or any CSV / Excel with an
 NSG column) and finds, for each NSG:
@@ -28,7 +28,7 @@ import threading
 import xml.etree.ElementTree as ET
 import zipfile
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 DOCS = os.path.join(os.path.expanduser("~"), "Documents")
 SETTINGS = os.path.join(os.path.expanduser("~"), ".nsg_rg_lookup.json")
 NSG_COLUMNS = ("nsg", "networksecuritygroupname", "networksecuritygroup", "nsg_name", "nsgname")
@@ -349,6 +349,8 @@ def open_path(path):
         subprocess.run(["xdg-open", path])
 
 
+COLOUR_RANK = {"bad": 0, "warn": 1, "ok": 2}   # red, amber, green
+
 STATUS_TEXT = {
     "READ_ONLY_LOCK": "Locked (read-only)",
     "DELETE_LOCK": "Locked (delete)",
@@ -422,8 +424,8 @@ def gui_main():
     mod = "Command" if sys.platform == "darwin" else "Control"
     copy_key = "Cmd+C" if sys.platform == "darwin" else "Ctrl+C"
     ttk.Label(root, foreground="#666666", padding=(12, 0, 12, 4),
-              text=("Red = lock blocks the change, amber = check, green = no lock.   "
-                    f"Double-click a cell to copy it. Right-click for more. Select rows and press {copy_key}.")
+              text=("Red = lock blocks the change, amber = check, green = no lock.   Click Resource group to group by colour.   "
+                    f"Double-click to copy a cell, right-click for more, {copy_key} copies selected rows.")
               ).pack(fill="x")
 
     cols = ("nsg", "sub", "rg", "status", "locks", "deleted", "updated", "blocks", "from")
@@ -434,7 +436,7 @@ def gui_main():
     frame.pack(fill="both", expand=True)
     tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="extended")
     for c, h, w in zip(cols, heads, widths):
-        tree.heading(c, text=h)
+        tree.heading(c, text=h, command=lambda c=c: sort_by(c))
         tree.column(c, width=w, anchor="w", stretch=(c in ("nsg", "locks")))
     ysb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
     xsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
@@ -447,6 +449,29 @@ def gui_main():
     tree.tag_configure("ok", foreground="#1a7f37")
     tree.tag_configure("warn", foreground="#9a6700")
     tree.tag_configure("bad", foreground="#cf222e")
+
+    # ----- sorting: click a heading to sort, click again to reverse -----
+    sort_state = {"col": None, "reverse": False}
+
+    def sort_key(item, c):
+        v = tree.set(item, c)
+        tag = (tree.item(item, "tags") or ("ok",))[0]
+        if c in ("deleted", "updated"):
+            return (int(v or 0),)
+        if c == "rg":                          # Resource group: red, amber, green, then A to Z
+            return (COLOUR_RANK.get(tag, 9), v.lower(), tree.set(item, "nsg").lower())
+        if c == "status":                      # Lock status: by colour, then text
+            return (COLOUR_RANK.get(tag, 9), v.lower())
+        return (v.lower(),)
+
+    def sort_by(c):
+        reverse = (not sort_state["reverse"]) if sort_state["col"] == c else False
+        items = sorted(tree.get_children(""), key=lambda it: sort_key(it, c), reverse=reverse)
+        for i, it in enumerate(items):
+            tree.move(it, "", i)
+        sort_state.update(col=c, reverse=reverse)
+        for col, h in zip(cols, heads):
+            tree.heading(col, text=h + ((" \u25bc" if reverse else " \u25b2") if col == c else ""))
 
     # ----- copy helpers (same behaviour as nsg-lookup) -----
     clear_job = {"id": None}
@@ -545,18 +570,23 @@ def gui_main():
     export_btn.configure(command=export_csv)
 
     # ----- run the lookup in the background so the window stays responsive -----
+    def colour(r):
+        if r["status"] in ("NOT_FOUND", "LOCKS_UNKNOWN"):
+            return "warn"
+        if blocks_change(r):
+            return "bad"
+        if r["status"] in ("DELETE_LOCK", "READ_ONLY_LOCK"):
+            return "warn"
+        return "ok"
+
     def show(results):
         tree.delete(*tree.get_children())
+        sort_state.update(col=None, reverse=False)
+        for c, h in zip(cols, heads):
+            tree.heading(c, text=h)
         for r in results:
             blocks = blocks_change(r)
-            if r["status"] in ("NOT_FOUND", "LOCKS_UNKNOWN"):
-                tag = "warn"
-            elif blocks:
-                tag = "bad"
-            elif r["status"] in ("DELETE_LOCK", "READ_ONLY_LOCK"):
-                tag = "warn"
-            else:
-                tag = "ok"
+            tag = colour(r)
             status = STATUS_TEXT[r["status"]] + (" (in several subscriptions)" if r.get("multiple") else "")
             tree.insert("", "end", tags=(tag,), values=(
                 r["nsg"], r["subscription"], r["resourceGroup"], status, describe_locks(r),
