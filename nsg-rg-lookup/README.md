@@ -35,6 +35,7 @@ It helps:
 | Blocks change? | Works out whether a lock stops the change. A `CanNotDelete` lock blocks deleting rules, a `ReadOnly` lock blocks any change |
 | Copy unlock list | Copies a short summary of each locked resource group, its locks, and the NSGs affected, ready to send |
 | Results table | One row per NSG, colour coded: red = lock blocks the change, amber = check, green = no lock |
+| Sort | Click the **Resource group** heading to group red at the top, then amber, then green (resource groups A to Z within each). Click again to flip. Every other heading sorts by that column |
 | Copy a single value | Double-click any cell to copy just that value, or right-click for a menu: copy the cell, the selected rows, the column, all results, or the unlock list |
 | Copy and export | **Copy results** pastes into Excel or a ticket. **Export CSV** saves the table |
 | Large lists | Looks up NSGs in batches and pages past the Resource Graph 1,000-row limit |
@@ -109,7 +110,7 @@ python nsg_rg_lookup_gui.py
 1. Run `az login` first if you have not already.
 2. Click **Browse** and pick your reports. Hold Cmd (Mac) or Ctrl (Windows) and click to pick several, or click the first and Shift+click the last to pick a range.
 3. Click **Look up**. The status line shows progress, then a summary.
-4. Check the table. Red rows have a lock that blocks the change.
+4. Check the table. Red rows have a lock that blocks the change. Click the **Resource group** heading to bring all the red rows to the top.
 5. Click **Copy unlock list** and send it to whoever can remove the locks.
 
 Example of what **Copy unlock list** gives you:
