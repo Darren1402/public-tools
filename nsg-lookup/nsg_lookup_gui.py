@@ -19,6 +19,8 @@ USAGE
     python3 nsg_lookup_gui.py
 """
 
+__version__ = "2.1.0"
+
 import csv
 import ipaddress
 import json
@@ -61,7 +63,9 @@ QUERY = (
     '    VNetName = name, '
     '    SubnetName = tostring(subnet.name), '
     '    AddressPrefix = tostring(subnet.properties.addressPrefix), '
-    '    NSG_Name = iff(isnotempty(nsgName), tostring(nsgName), "NO NSG ATTACHED")'
+    '    NSG_Name = iff(isnotempty(nsgName), tostring(nsgName), "NO NSG ATTACHED"), '
+    '    id '
+    '| order by id asc, SubnetName asc'
 )
 
 COLUMNS = [
@@ -96,7 +100,7 @@ def run_az(args):
     return json.loads(result.stdout), None
 
 
-def load_subnets(max_pages=25):
+def load_subnets(max_pages=50):
     """Returns (rows, error_text). Pages through Resource Graph results."""
     # Make sure the resource-graph extension is present (no-op if it is).
     run_az(["az", "extension", "add", "--name", "resource-graph", "-y"])
@@ -104,7 +108,10 @@ def load_subnets(max_pages=25):
     all_rows = []
     skip_token = None
     for _ in range(max_pages):
-        cmd = ["az", "graph", "query", "-q", QUERY, "-o", "json"]
+        # --first 1000: az defaults to only 100 rows per page. A projected id
+        # column and a stable order are needed for skip-token paging to be
+        # reliable; without them Resource Graph returns a random subset.
+        cmd = ["az", "graph", "query", "-q", QUERY, "--first", "1000", "-o", "json"]
         if skip_token:
             cmd += ["--skip-token", skip_token]
         result, err = run_az(cmd)
@@ -151,7 +158,7 @@ class App:
         self._tip_job = None
         self._tip_key = None
 
-        root.title("NSG Subnet Lookup")
+        root.title(f"NSG Subnet Lookup v{__version__}")
         root.geometry("1100x620")
         root.minsize(700, 480)
 
@@ -270,7 +277,7 @@ class App:
         foot.pack(fill="x")
         ttk.Button(foot, text="Copy results", command=self.copy_results).pack(side="left")
         ttk.Button(foot, text="Export CSV", command=self.export_csv).pack(side="left", padx=6)
-        self.status = tk.StringVar(value="Starting...")
+        self.status = tk.StringVar(value=f"v{__version__}  Starting...")
         ttk.Label(foot, textvariable=self.status).pack(side="right")
 
     # ---- IP input rows ---------------------------------------------------
