@@ -26,6 +26,21 @@ It helps:
 
 ---
 
+## Works with NSG IP Removal
+These two tools are used together for an NSG rule clean-up:
+
+1. **NSG IP Removal**: run it once per VNet. It updates the Terraform CSV (`<name>_updated.csv`) and saves `ip_removal_report.csv` to Documents. Rename the report after each run (for example `CMT-20170006.csv`), or the next run overwrites it.
+2. **NSG RG Lookup**: pick all the renamed reports at once. For every NSG in them it finds the Subscription and Resource Group, any locks that apply, and whether you have the access to make the change. It reads the report's status column, so it knows which NSGs have deleted rules (`RULE_DELETED`, needs delete access) and which only have updated rules (`REMOVED` / `PARTIAL`, needs edit access).
+3. Click **Copy unlock list** and send it to whoever can lift the locks. If **Access OK?** shows No anywhere, click **Copy access gaps** and send that too.
+4. Once the locks are lifted and access is in place, replace the original CSV with `<name>_updated.csv` and run `terraform plan`, then `terraform apply`.
+5. Ask for the locks to be put back.
+
+A `CanNotDelete` lock only blocks deleted rules. Rules that only had IPs removed can go ahead with that lock in place.
+
+Get NSG IP Removal from [Releases](https://github.com/Darren1402/public-tools/releases?q=nsg-ip-removal&expanded=true).
+
+---
+
 ## Features
 | Feature | What it does |
 |---|---|
