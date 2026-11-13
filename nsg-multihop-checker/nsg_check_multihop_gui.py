@@ -26,6 +26,8 @@ USAGE
     python3 nsg_check_multihop_gui.py
 """
 
+__version__ = "4.2.1"
+
 import csv
 import ipaddress
 import json
@@ -972,7 +974,7 @@ class App:
         self.wrap = 700
         self._card_texts = {}
 
-        root.title("NSG Multihop Checker")
+        root.title(f"NSG Multihop Checker v{__version__}")
         root.geometry("1100x720")
         root.minsize(760, 520)
 
@@ -1053,7 +1055,7 @@ class App:
         foot.pack(fill="x")
         ttk.Button(foot, text="Copy summary", command=self.copy_summary).pack(side="left")
         ttk.Button(foot, text="Export CSV", command=self.export_csv).pack(side="left", padx=6)
-        self.status = tk.StringVar(value="Starting...")
+        self.status = tk.StringVar(value=f"v{__version__}  Starting...")
         ttk.Label(foot, textvariable=self.status).pack(side="right")
         self.progress = ttk.Progressbar(foot, mode="indeterminate", length=90)
         self._bind_shortcuts()
