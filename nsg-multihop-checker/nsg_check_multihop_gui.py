@@ -64,7 +64,8 @@ QUERY = (
     'AddressPrefix = tostring(subnet.properties.addressPrefix), '
     'NSG_Name = iff(isnotempty(nsgName), tostring(nsgName), "NO NSG ATTACHED"), '
     'NSG_Id = nsgId, '
-    'RouteTableId = tostring(subnet.properties.routeTable.id)'
+    'RouteTableId = tostring(subnet.properties.routeTable.id), id '
+    '| order by id asc, SubnetName asc'
 )
 
 LB_QUERY = (
@@ -72,7 +73,8 @@ LB_QUERY = (
     '| where type =~ "microsoft.network/loadbalancers" '
     '| mvexpand fic = properties.frontendIPConfigurations '
     '| project LBName = name, ResourceGroup = resourceGroup, LBId = id, '
-    'PrivateIP = tostring(fic.properties.privateIPAddress)'
+    'PrivateIP = tostring(fic.properties.privateIPAddress), id '
+    '| order by id asc, PrivateIP asc'
 )
 
 ASG_QUERY = (
@@ -81,7 +83,8 @@ ASG_QUERY = (
     '| mvexpand ipconfig = properties.ipConfigurations '
     '| mvexpand asg = ipconfig.properties.applicationSecurityGroups '
     '| project PrivateIP = tostring(ipconfig.properties.privateIPAddress), '
-    'ASGId = tostring(asg.id)'
+    'ASGId = tostring(asg.id), id '
+    '| order by id asc, PrivateIP asc, ASGId asc'
 )
 
 
@@ -133,11 +136,14 @@ def clear_cache():
     _cache.clear()
 
 
-def graph_all_pages(query, max_pages=25):
+def graph_all_pages(query, max_pages=50):
     """Returns (rows, error_text). Pages through Resource Graph results."""
     all_rows, skip_token = [], None
     for _ in range(max_pages):
-        cmd = ["az", "graph", "query", "-q", query, "-o", "json"]
+        # --first 1000: az defaults to only 100 rows per page. A projected id
+        # column and a stable order are needed for skip-token paging to be
+        # reliable; without them Resource Graph returns a random subset.
+        cmd = ["az", "graph", "query", "-q", query, "--first", "1000", "-o", "json"]
         if skip_token:
             cmd += ["--skip-token", skip_token]
         result, err = run_az(cmd)
