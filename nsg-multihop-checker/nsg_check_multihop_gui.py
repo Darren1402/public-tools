@@ -59,6 +59,7 @@ QUERY = (
     '| extend nsgId = tostring(subnet.properties.networkSecurityGroup.id) '
     "| extend nsgName = split(nsgId, '/')[-1] "
     '| project VNetName = name, ResourceGroup = resourceGroup, '
+    'SubscriptionId = subscriptionId, '
     'SubnetName = tostring(subnet.name), '
     'AddressPrefix = tostring(subnet.properties.addressPrefix), '
     'NSG_Name = iff(isnotempty(nsgName), tostring(nsgName), "NO NSG ATTACHED"), '
@@ -356,19 +357,25 @@ def find_matching_route(route_table, dst_ip):
     return best
 
 
-def get_peered_vnet_names(resource_group, vnet_name):
-    data = az(["az", "network", "vnet", "peering", "list",
-               "--resource-group", resource_group, "--vnet-name", vnet_name, "-o", "json"],
-              quiet=True)
+def get_peered_vnet_names(row):
+    """Connected peerings of the VNet in `row`, as lowercase VNet names.
+    Passes --subscription explicitly: without it az only looks in the CLI's
+    default subscription and fails for VNets that live anywhere else."""
+    vnet_name, resource_group = row["VNetName"], row["ResourceGroup"]
+    cmd = ["az", "network", "vnet", "peering", "list",
+           "--resource-group", resource_group, "--vnet-name", vnet_name, "-o", "json"]
+    if row.get("SubscriptionId"):
+        cmd += ["--subscription", row["SubscriptionId"]]
+    data = az(cmd)      # not quiet, so the real az error shows up in the notes
     if data is None:
-        note(f"Could not confirm peering for VNet '{vnet_name}' (resource group '{resource_group}'). "
-             "This may be Resource Graph indexing lag. Only same-VNet and explicit CIDR rules "
+        note(f"Could not list peerings for VNet '{vnet_name}' (resource group '{resource_group}'). "
+             "See the Azure error above. Only same-VNet and explicit CIDR rules "
              "were checked for that hop.")
         data = []
     peered = set()
     for p in data:
         if p.get("peeringState") == "Connected":
-            peered.add(p.get("remoteVirtualNetwork", {}).get("id", "").split("/")[-1])
+            peered.add(p.get("remoteVirtualNetwork", {}).get("id", "").split("/")[-1].lower())
     return peered
 
 
@@ -390,7 +397,7 @@ def ip_matches(rule, ip, prefix_field, prefixes_field, ip_owner_row, self_vnet_n
             if ip_owner_row is None:
                 continue
             owner_vnet = ip_owner_row["VNetName"]
-            if owner_vnet == self_vnet_name or owner_vnet in get_peered_names():
+            if owner_vnet == self_vnet_name or owner_vnet.lower() in get_peered_names():
                 return True
             continue
         try:
@@ -454,7 +461,7 @@ def check_nsg_ports(nsg_row, direction, src_ip, src_row, dst_ip, dst_row, dst_is
 
     def get_peered_names():
         if "v" not in peered:
-            peered["v"] = get_peered_vnet_names(nsg_row["ResourceGroup"], self_vnet)
+            peered["v"] = get_peered_vnet_names(nsg_row)
         return peered["v"]
 
     rules = (nsg.get("securityRules") or []) + (nsg.get("defaultSecurityRules") or [])
@@ -480,8 +487,7 @@ def check_nsg_ports(nsg_row, direction, src_ip, src_row, dst_ip, dst_row, dst_is
 def can_reach_directly(current_row, dst_row):
     if current_row["VNetName"] == dst_row["VNetName"]:
         return True
-    return dst_row["VNetName"] in get_peered_vnet_names(current_row["ResourceGroup"],
-                                                       current_row["VNetName"])
+    return dst_row["VNetName"].lower() in get_peered_vnet_names(current_row)
 
 
 def lb_partitions(lb, ports, protocol):
