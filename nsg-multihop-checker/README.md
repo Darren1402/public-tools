@@ -32,7 +32,7 @@ It helps:
 | IP resolution | Finds the Subscription, Resource Group, VNet, Subnet, and NSG for any IP via Azure Resource Graph | Yes | Yes |
 | Full path tracing | Follows route tables and peering hop by hop until the destination is reached, not capped at a fixed number of hops | Yes | Yes |
 | Rule evaluation | Checks custom and default NSG rules at every hop in correct priority order | Yes | Yes |
-| Peering aware | Verifies VNets are genuinely peered before assuming traffic can reach directly, does not guess | Yes | Yes |
+| Peering aware | Verifies VNets are genuinely peered before assuming traffic can reach directly, does not guess. Works across subscriptions, whichever subscription `az` is set to | Yes | Yes |
 | Loop protection | Detects a routing loop and stops instead of tracing forever | Yes | Yes |
 | Max hop limit | Configurable safety limit, stops and warns if the destination is not reached within it | Yes | Yes |
 | Load Balancer aware | Detects a Load Balancer frontend IP anywhere in the path, reads its Floating IP setting, and automatically traces to the real backend IP(s) if Floating IP is off | Yes | Yes |
@@ -86,7 +86,7 @@ Before running the script, ensure you have:
 - Python 3
 - tkinter (GUI only, see Platform notes)
 - Azure CLI, logged in (`az login`)
-- Reader access to the target subscription(s), no write permissions needed
+- Reader access to every subscription along the path, including the subscriptions of peered VNets, no write permissions needed
 
 ---
 
@@ -194,6 +194,7 @@ Rows with an invalid protocol are skipped with a message. Both flags can be comb
 | Backend pool types | Supports both NIC-based and IP-based (address-only) backend pools when resolving the real backend IP(s) behind a Load Balancer |
 | Port ranges | GUI only. The command line checks one port per run |
 | Saving results | The command line prints to screen only. The GUI can copy a summary or export a CSV, nothing is saved unless you choose to |
+| Missing access | If you lack Reader on a VNet's subscription, its peerings cannot be read. The yellow note shows the Azure error, and that hop is checked using same-VNet and explicit CIDR rules only |
 | Writes | None. Every operation is read-only, nothing is created, changed, or deleted |
 | Real-world delivery | ALLOW at every hop does not guarantee the traffic actually works end to end |
 
