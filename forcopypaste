@@ -1,0 +1,6 @@
+resources
+| where type =~ 'microsoft.network/virtualnetworks' and name =~ 'VNETUATIA-SPT-DNET'
+| mv-expand p = properties.virtualNetworkPeerings
+| project subscriptionId, resourceGroup,
+    remote = tostring(p.properties.remoteVirtualNetwork.id),
+    state = tostring(p.properties.peeringState)
