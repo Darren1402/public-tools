@@ -108,7 +108,7 @@ python3 nsg_lookup_gui.py
 python nsg_lookup_gui.py
 ```
 
-1. The window opens and loads all subnets from Azure once. When the status in the bottom right says "N subnets loaded", it is ready.
+1. The window opens and loads all subnets from Azure once. When the status in the bottom right says "N subnets loaded", it is ready. The version you are running is shown in the title bar.
 2. Type an IP in the first box. Press Enter or click **+ Add IP** for another box, or paste a whole list into any box and it splits into rows.
 3. Click **Look up all**. The results table fills in, one numbered row per IP.
 4. Use the **Filter** box above the results to narrow them down. Click the **x** next to it, or press Esc, to show everything again.
